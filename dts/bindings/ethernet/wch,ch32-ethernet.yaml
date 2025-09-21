@@ -1,0 +1,23 @@
+# Copyright (c) 2025 James Bennion-Pedley <james@bojit.org>
+# SPDX-License-Identifier: Apache-2.0
+
+include: [ethernet-controller.yaml, pinctrl-device.yaml]
+
+description: |
+  Ethernet MAC Controller for WCH CH32 series MCUs
+
+compatible: "wch,ch32-ethernet"
+
+properties:
+  interrupts:
+    required: true
+  clocks:
+    required: true
+  pinctrl-0:
+    required: true
+  pinctrl-names:
+    required: true
+  phy-connection-type:
+    required: true
+  phy-handle:
+    required: true
