@@ -107,14 +107,15 @@ static int mdio_wch_init(const struct device *dev)
 	struct mdio_wch_data *const dev_data = dev->data;
 	const struct mdio_wch_config *const config = dev->config;
 
+	/* enable clock */
 	clock_control_subsys_t clock_sys = (clock_control_subsys_t *)(uintptr_t)config->clk_id;
-
 	int ret = clock_control_on(config->clk_dev, clock_sys);
 	if (ret < 0) {
 		LOG_ERR("Failed to enable ethernet clock needed for MDIO (%d)", ret);
 		return ret;
 	}
 
+	/* configure pinmux */
 	ret = pinctrl_apply_state(config->pin_cfg, PINCTRL_STATE_DEFAULT);
 	if (ret < 0) {
 		return ret;

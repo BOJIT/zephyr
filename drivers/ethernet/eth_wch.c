@@ -54,11 +54,15 @@ LOG_MODULE_REGISTER(ethernet_wch, LOG_LEVEL);
 struct eth_wch_config {
 	ETH_TypeDef *regs;
 
-	// void (*config_func)(void);
+	const struct device *clk_dev;
+	uint8_t clk_id;
+	const struct device *clk_tx_dev;
+	uint8_t clk_tx_id;
+	const struct device *clk_rx_dev;
+	uint8_t clk_rx_id;
 
-	// struct stm32_pclken pclken;
-	// struct stm32_pclken pclken_rx;
-	// struct stm32_pclken pclken_tx;
+	bool use_random_mac;
+
 	const struct pinctrl_dev_config *pin_cfg;
 	void (*irq_config_func)(const struct device *dev);
 };
@@ -68,9 +72,7 @@ struct eth_wch_data {
 	uint8_t mac_addr[6];
 	struct k_mutex tx_mutex;
 	struct k_sem rx_int_sem;
-#if defined(CONFIG_ETH_STM32_HAL_API_V2)
 	struct k_sem tx_int_sem;
-#endif /* CONFIG_ETH_STM32_HAL_API_V2 */
 	K_KERNEL_STACK_MEMBER(rx_thread_stack, CONFIG_ETH_WCH_HAL_RX_THREAD_STACK_SIZE);
 	struct k_thread rx_thread;
 #if defined(CONFIG_ETH_STM32_MULTICAST_FILTER)
@@ -225,7 +227,7 @@ static void rx_thread(void *arg1, void *unused1, void *unused2)
 	ARG_UNUSED(unused2);
 
 	while (1) {
-		// res = k_sem_take(&dev_data->rx_int_sem, K_FOREVER);
+		res = k_sem_take(&data->rx_int_sem, K_FOREVER);
 		if (res == 0) {
 			/* semaphore taken and receive packets */
 			while ((pkt = eth_rx(dev)) != NULL) {
@@ -247,83 +249,77 @@ static void rx_thread(void *arg1, void *unused1, void *unused2)
 static void eth_isr(const struct device *dev)
 {
 	struct eth_wch_data *data = dev->data;
-	// ETH_HandleTypeDef *heth = &dev_data->heth;
+	const struct eth_wch_config *config = dev->config;
+	ETH_TypeDef *eth = config->regs;
 
-	// HAL_ETH_IRQHandler(heth);
+	uint32_t status_flags = ETH->DMASR;
+
+	/* Error Flags */
+	if (status_flags & ETH_DMA_IT_AIS) {
+		if (status_flags & ETH_DMA_IT_RBU) {
+			// if ((ChipId & 0xf0) == 0x10) {
+			// 	((ETH_DMADESCTypeDef *)(((ETH_DMADESCTypeDef *)(ETH->DMACHRDR))
+			// 					->Buffer2NextDescAddr))
+			// 		->Status = ETH_DMARxDesc_OWN;
+
+			// 	/* Resume DMA reception */
+			// 	ETH->DMARPDR = 0;
+			// }
+			eth->DMASR = ETH_DMA_IT_RBU;
+			// Out of descriptors. Write to RPDR to continue reception
+		}
+		eth->DMASR = ETH_DMA_IT_AIS;
+	}
+
+	/* Standard Flags */
+	if (status_flags & ETH_DMA_IT_NIS) {
+		if (status_flags & ETH_DMA_IT_R) {
+			k_sem_give(&data->rx_int_sem);
+			eth->DMASR = ETH_DMA_IT_R;
+		}
+		if (status_flags & ETH_DMA_IT_T) {
+			k_sem_give(&data->tx_int_sem);
+			eth->DMASR = ETH_DMA_IT_T;
+		}
+		if (status_flags & ETH_DMA_IT_PHYLINK) {
+			// ETH_PHYLink();
+			// TODO handle PHY status (different for internal and external)
+			eth->DMASR = ETH_DMA_IT_PHYLINK;
+		}
+		eth->DMASR = ETH_DMA_IT_NIS;
+	}
 }
 
-static struct net_if *get_iface(struct eth_stm32_hal_dev_data *ctx)
+static struct net_if *get_iface(struct eth_wch_data *data)
 {
-	return NULL;
-	// return ctx->iface;
+	return data->iface;
 }
 
-static void generate_mac(uint8_t *mac_addr)
+static void generate_mac(uint8_t *mac_addr, bool random)
 {
-#if defined(ETH_WCH_RANDOM_MAC)
-	gen_random_mac(mac_addr, ST_OUI_B0, ST_OUI_B1, ST_OUI_B2);
-	mac_addr[0] |= 0x02; /* Ensure locally administered address */
-#else                        /* Use user defined mac address */
-	mac_addr[0] = 0x01;
-	mac_addr[1] = 0x02;
-	mac_addr[2] = 0x03;
-	mac_addr[3] = 0x04;
-	mac_addr[4] = 0x05;
-	mac_addr[5] = 0x06;
-	// TODO get builtin assigned WCH MAC
-	// uint8_t unique_device_ID_12_bytes[12];
-	// uint32_t result_mac_32_bits;
-#endif
+	/* WCH uses this as a MAC address, unclear if it is an IEEE-assigned MAC */
+	uint8_t *mac_base = (uint8_t *)(ROM_CFG_USERADR_ID);
+
+	for (size_t i = 0; i < NET_ETH_ADDR_LEN; i++) {
+		mac_addr[i] = mac_base[NET_ETH_ADDR_LEN - 1 - i];
+	}
+
+	if (random) {
+		// Generate random address based on WCH OUI (burned into the chip)
+		gen_random_mac(mac_addr, mac_addr[0], mac_addr[1], mac_addr[2]);
+	}
 }
 
-static int eth_wch_init(const struct device *dev)
+static int eth_mac_init(const struct device *dev)
 {
 	struct eth_wch_data *data = dev->data;
 	const struct eth_wch_config *config = dev->config;
+	ETH_TypeDef *eth = config->regs;
 
-	// ETH_HandleTypeDef *heth = &dev_data->heth;
-	int ret = 0;
-
-	// if (!device_is_ready(DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE))) {
-	// 	LOG_ERR("clock control device not ready");
-	// 	return -ENODEV;
-	// }
-
-	/* enable clock */
-	// ret = clock_control_on(DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE),
-	// 		       (clock_control_subsys_t)&cfg->pclken);
-	// ret |= clock_control_on(DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE),
-	// 			(clock_control_subsys_t)&cfg->pclken_tx);
-	// ret |= clock_control_on(DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE),
-	// 			(clock_control_subsys_t)&cfg->pclken_rx);
-
-	if (ret) {
-		LOG_ERR("Failed to enable ethernet clock");
-		return -EIO;
-	}
-
-	/* configure pinmux */
-	// ret = pinctrl_apply_state(cfg->pcfg, PINCTRL_STATE_DEFAULT);
-	// if (ret < 0) {
-	// 	LOG_ERR("Could not configure ethernet pins");
-	// 	return ret;
-	// }
-
-	// generate_mac(dev_data->mac_addr);
-
-	// heth->Init.MACAddr = dev_data->mac_addr;
-
-	// LOG_DBG("MAC %02x:%02x:%02x:%02x:%02x:%02x", dev_data->mac_addr[0],
-	// dev_data->mac_addr[1], 	dev_data->mac_addr[2], dev_data->mac_addr[3],
-	// dev_data->mac_addr[4], 	dev_data->mac_addr[5]);
-
-	return 0;
-}
-
-static int eth_mac_init_post(const struct device *dev)
-{
-	struct eth_wch_data *data = dev->data;
-	// ETH_HandleTypeDef *heth = &dev_data->heth;
+	// Set MAC Address in Hardware
+	eth->MACA0HR = (data->mac_addr[5] << 8) | data->mac_addr[4];
+	eth->MACA0LR = (data->mac_addr[3] << 24) | (data->mac_addr[2] << 16) |
+		       (data->mac_addr[1] << 8) | data->mac_addr[0];
 
 	// heth->Init.TxDesc = dma_tx_desc_tab;
 	// heth->Init.RxDesc = dma_rx_desc_tab;
@@ -339,11 +335,6 @@ static int eth_mac_init_post(const struct device *dev)
 	// 	LOG_ERR("HAL_ETH_Init failed: %d", hal_ret);
 	// 	return -EINVAL;
 	// }
-
-	/* Initialize semaphores */
-	// k_mutex_init(&dev_data->tx_mutex);
-	// k_sem_init(&dev_data->rx_int_sem, 0, K_SEM_MAX_LIMIT);
-	// k_sem_init(&dev_data->tx_int_sem, 0, K_SEM_MAX_LIMIT);
 
 	/* Tx config init: */
 	// memset(&tx_config, 0, sizeof(ETH_TxPacketConfig));
@@ -384,7 +375,7 @@ static void set_mac_config(const struct device *dev, struct phy_link_state *stat
 	// }
 }
 
-static int eth_stm32_hal_start(const struct device *dev)
+static int eth_wch_start(const struct device *dev)
 {
 	struct eth_wch_data *data = dev->data;
 	// ETH_HandleTypeDef *heth = &dev_data->heth;
@@ -405,7 +396,7 @@ static int eth_stm32_hal_start(const struct device *dev)
 	return 0;
 }
 
-static int eth_stm32_hal_stop(const struct device *dev)
+static int eth_wch_stop(const struct device *dev)
 {
 	struct eth_wch_data *data = dev->data;
 	// ETH_HandleTypeDef *heth = &dev_data->heth;
@@ -424,6 +415,7 @@ static int eth_stm32_hal_stop(const struct device *dev)
 	return 0;
 }
 
+// TODO where is this used?
 static void phy_link_state_changed(const struct device *phy_dev, struct phy_link_state *state,
 				   void *user_data)
 {
@@ -432,17 +424,17 @@ static void phy_link_state_changed(const struct device *phy_dev, struct phy_link
 
 	ARG_UNUSED(phy_dev);
 
-	/* The hal also needs to be stopped before changing the MAC
+	/* The MAC also needs to be stopped before changing the MAC
 	 * config. The speed can change without receiving a link down
 	 * callback before.
 	 */
-	eth_stm32_hal_stop(dev);
+	eth_wch_stop(dev);
 	if (state->is_up) {
 		set_mac_config(dev, state);
-		eth_stm32_hal_start(dev);
-		// net_eth_carrier_on(dev_data->iface);
+		eth_wch_start(dev);
+		net_eth_carrier_on(data->iface);
 	} else {
-		// net_eth_carrier_off(dev_data->iface);
+		net_eth_carrier_off(data->iface);
 	}
 }
 
@@ -450,32 +442,31 @@ static void eth_wch_iface_init(struct net_if *iface)
 {
 	const struct device *dev = net_if_get_device(iface);
 	struct eth_wch_data *data = dev->data;
+	const struct eth_wch_config *config = dev->config;
 
-	// ETH_HandleTypeDef *heth = &dev_data->heth;
+	/* Certain initialisation is only done once per interface */
 	bool is_first_init = false;
-
-	// if (dev_data->iface == NULL) {
-	// 	dev_data->iface = iface;
-	// 	is_first_init = true;
-	// }
+	if (data->iface == NULL) {
+		data->iface = iface;
+		is_first_init = true;
+	}
 
 	/* Register Ethernet MAC Address with the upper layer */
-	// net_if_set_link_addr(iface, dev_data->mac_addr, sizeof(dev_data->mac_addr),
-	// 		     NET_LINK_ETHERNET);
+	net_if_set_link_addr(iface, data->mac_addr, sizeof(data->mac_addr), NET_LINK_ETHERNET);
 
+	/* Initialise interface with relevant hardware settings */
 	ethernet_init(iface);
-
-	/* This function requires the Ethernet interface to be
-	 * properly initialized. In auto-negotiation mode, it reads the
-	 * speed and duplex settings to configure the driver
-	 * accordingly.
-	 */
-	eth_mac_init_post(dev);
+	eth_mac_init(dev);
 
 	// setup_mac_filter(heth);
 
 	net_if_carrier_off(iface);
 	net_lldp_set_lldpdu(iface);
+
+	/* Initialize semaphores */
+	k_mutex_init(&data->tx_mutex);
+	k_sem_init(&data->rx_int_sem, 0, K_SEM_MAX_LIMIT);
+	k_sem_init(&data->tx_int_sem, 0, K_SEM_MAX_LIMIT);
 
 	if (device_is_ready(eth_wch_phy_dev)) {
 		phy_link_callback_set(eth_wch_phy_dev, phy_link_state_changed, (void *)dev);
@@ -484,23 +475,17 @@ static void eth_wch_iface_init(struct net_if *iface)
 	}
 
 	if (is_first_init) {
-		const struct eth_wch_config *config = dev->config;
-		/* Now that the iface is setup, we are safe to enable
-		 * IRQs. */
+		/* Now that the iface is setup, we are safe to enable IRQs. */
 		__ASSERT_NO_MSG(config->irq_config_func != NULL);
 		config->irq_config_func(dev);
 
 		/* Start interruption-poll thread */
-		// k_thread_create(&dev_data->rx_thread, dev_data->rx_thread_stack,
-		// 		K_KERNEL_STACK_SIZEOF(dev_data->rx_thread_stack), rx_thread,
-		// 		(void *)dev, NULL, NULL,
-		// 		IS_ENABLED(CONFIG_ETH_STM32_HAL_RX_THREAD_PREEMPTIVE)
-		// 			? K_PRIO_PREEMPT(CONFIG_ETH_STM32_HAL_RX_THREAD_PRIO)
-		// 			: K_PRIO_COOP(CONFIG_ETH_STM32_HAL_RX_THREAD_PRIO),
-		// 		0, K_NO_WAIT);
+		k_thread_create(&data->rx_thread, data->rx_thread_stack,
+				K_KERNEL_STACK_SIZEOF(data->rx_thread_stack), rx_thread,
+				(void *)dev, NULL, NULL,
+				K_PRIO_COOP(CONFIG_ETH_WCH_HAL_RX_THREAD_PRIO), 0, K_NO_WAIT);
 
-		// k_thread_name_set(&dev_data->rx_thread, "wch_eth_rx"); // TODO add instance
-		// suffix?
+		k_thread_name_set(&data->rx_thread, dev->name);
 	}
 }
 
@@ -525,32 +510,30 @@ static int eth_wch_set_config(const struct device *dev, enum ethernet_config_typ
 			      const struct ethernet_config *config)
 {
 	struct eth_wch_data *data = dev->data;
-	// ETH_HandleTypeDef *heth = &dev_data->heth;
+	const struct eth_wch_config *dev_config = dev->config;
+	ETH_TypeDef *eth = dev_config->regs;
 
 	switch (type) {
 	case ETHERNET_CONFIG_TYPE_MAC_ADDRESS:
-		// memcpy(dev_data->mac_addr, config->mac_address.addr, 6);
-		// heth->Instance->MACA0HR = (dev_data->mac_addr[5] << 8) | dev_data->mac_addr[4];
-		// heth->Instance->MACA0LR = (dev_data->mac_addr[3] << 24) |
-		// 			  (dev_data->mac_addr[2] << 16) |
-		// 			  (dev_data->mac_addr[1] << 8) | dev_data->mac_addr[0];
-		// net_if_set_link_addr(dev_data->iface, dev_data->mac_addr,
-		// 		     sizeof(dev_data->mac_addr), NET_LINK_ETHERNET);
+		memcpy(data->mac_addr, config->mac_address.addr, 6);
+		eth->MACA0HR = (data->mac_addr[5] << 8) | data->mac_addr[4];
+		eth->MACA0LR = (data->mac_addr[3] << 24) | (data->mac_addr[2] << 16) |
+			       (data->mac_addr[1] << 8) | data->mac_addr[0];
+		net_if_set_link_addr(data->iface, data->mac_addr, sizeof(data->mac_addr),
+				     NET_LINK_ETHERNET);
 		return 0;
 #if defined(CONFIG_NET_PROMISCUOUS_MODE)
 	case ETHERNET_CONFIG_TYPE_PROMISC_MODE:
-		ETH_MACFilterConfigTypeDef MACFilterConf;
-
-		HAL_ETH_GetMACFilterConfig(heth, &MACFilterConf);
-
-		MACFilterConf.PromiscuousMode = config->promisc_mode ? ENABLE : DISABLE;
-
-		HAL_ETH_SetMACFilterConfig(heth, &MACFilterConf);
+		if (config->promisc_mode) {
+			eth->MACFFR |= ETH_MACFFR_PM;
+		} else {
+			eth->MACFFR &= ~ETH_MACFFR_PM;
+		}
 		return 0;
 #endif /* CONFIG_NET_PROMISCUOUS_MODE */
 #if defined(ETH_WCH_MULTICAST_FILTER)
 	case ETHERNET_CONFIG_TYPE_FILTER:
-		// eth_stm32_mcast_filter(dev, &config->filter);
+		// eth_stm32_mcast_filter(dev, &config->filter); // TODO
 		return 0;
 #endif /* ETH_WCH_MULTICAST_FILTER */
 	default:
@@ -574,6 +557,47 @@ static struct net_stats_eth *eth_wch_get_stats(const struct device *dev)
 	return &dev_data->stats;
 }
 #endif /* CONFIG_NET_STATISTICS_ETHERNET */
+
+static int eth_wch_init(const struct device *dev)
+{
+	struct eth_wch_data *data = dev->data;
+	const struct eth_wch_config *config = dev->config;
+
+	int ret = 0;
+
+	/* enable clocks */
+	clock_control_subsys_t clock_sys;
+	clock_sys = (clock_control_subsys_t *)(uintptr_t)config->clk_id;
+	ret = clock_control_on(config->clk_dev, clock_sys);
+	clock_sys = (clock_control_subsys_t *)(uintptr_t)config->clk_tx_id;
+	ret |= clock_control_on(config->clk_tx_dev, clock_sys);
+	clock_sys = (clock_control_subsys_t *)(uintptr_t)config->clk_rx_id;
+	ret |= clock_control_on(config->clk_rx_dev, clock_sys);
+
+	if (ret) {
+		LOG_ERR("Failed to enable ethernet clocks");
+		return -EIO;
+	}
+
+	/* Enable Internal PHY (note - this is not controlled on a per-peripheral basis!) */
+	// if(DT_NODE_HAS_PROP) {
+	// 	EXTEN->EXTEN_CTR |= EXTEN_ETH_10M_EN;
+	// }
+
+	/* configure pinmux */
+	ret = pinctrl_apply_state(config->pin_cfg, PINCTRL_STATE_DEFAULT);
+	if (ret < 0) {
+		LOG_ERR("Could not configure ethernet pins (%d)", ret);
+		return ret;
+	}
+
+	// Generate MAC address (once at boot)
+	generate_mac(data->mac_addr, config->use_random_mac);
+	LOG_DBG("MAC %02x:%02x:%02x:%02x:%02x:%02x", data->mac_addr[0], data->mac_addr[1],
+		data->mac_addr[2], data->mac_addr[3], data->mac_addr[4], data->mac_addr[5]);
+
+	return 0;
+}
 
 static const struct ethernet_api eth_api = {
 	.iface_api.init = eth_wch_iface_init,
@@ -608,6 +632,13 @@ static const struct ethernet_api eth_api = {
 	ETH_WCH_IRQ_HANDLER_DECL(inst)                                                             \
 	static const struct eth_wch_config eth_wch_config_##inst = {                               \
 		.regs = (ETH_TypeDef *)DT_REG_ADDR(DT_INST_PARENT(inst)),                          \
+		.clk_dev = DEVICE_DT_GET(DT_CLOCKS_CTLR(DT_INST_PARENT(inst))),                    \
+		.clk_id = DT_CLOCKS_CELL(DT_INST_PARENT(inst), id),                                \
+		.clk_tx_dev = DEVICE_DT_GET(DT_INST_CLOCKS_CTLR_BY_IDX(inst, 0)),                  \
+		.clk_tx_id = DT_INST_CLOCKS_CELL_BY_IDX(inst, 0, id),                              \
+		.clk_rx_dev = DEVICE_DT_GET(DT_INST_CLOCKS_CTLR_BY_IDX(inst, 1)),                  \
+		.clk_rx_id = DT_INST_CLOCKS_CELL_BY_IDX(inst, 1, id),                              \
+		.use_random_mac = DT_INST_PROP(inst, zephyr_random_mac_address),                   \
 		.pin_cfg = PINCTRL_DT_INST_DEV_CONFIG_GET(inst),                                   \
 		ETH_WCH_IRQ_HANDLER_FUNC(inst)};                                                   \
 	static struct eth_wch_data eth_wch_data_##inst;                                            \
