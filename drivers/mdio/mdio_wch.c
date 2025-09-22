@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#define DT_DRV_COMPAT wch_ch32_mdio
+
+#define LOG_LEVEL CONFIG_MDIO_LOG_LEVEL
+#include <zephyr/logging/log.h>
+LOG_MODULE_REGISTER(mdio_wch, LOG_LEVEL);
+
 #include <stdint.h>
 #include <errno.h>
 #include <zephyr/device.h>
@@ -13,20 +19,17 @@
 #include <zephyr/net/ethernet.h>
 #include <zephyr/net/mdio.h>
 
-#define DT_DRV_COMPAT wch_ch32_mdio
+#include <hal_ch32fun.h>
 
-#include <zephyr/logging/log.h>
-
-LOG_MODULE_REGISTER(mdio_wch, CONFIG_MDIO_LOG_LEVEL);
+struct mdio_wch_config {
+	ETH_TypeDef *regs;
+	const struct device *clk_dev;
+	const struct pinctrl_dev_config *pin_cfg;
+};
 
 struct mdio_wch_data {
 	struct k_sem sem;
 	int placeholder;
-	// ETH_HandleTypeDef heth;
-};
-
-struct mdio_wch_config {
-	const struct pinctrl_dev_config *pincfg;
 };
 
 static int mdio_wch_read(const struct device *dev, uint8_t prtad, uint8_t regad, uint16_t *data)
@@ -67,7 +70,7 @@ static int mdio_wch_init(const struct device *dev)
 	// 	return ret;
 	// }
 
-	ret = pinctrl_apply_state(config->pincfg, PINCTRL_STATE_DEFAULT);
+	ret = pinctrl_apply_state(config->pin_cfg, PINCTRL_STATE_DEFAULT);
 	if (ret < 0) {
 		return ret;
 	}
@@ -84,12 +87,11 @@ static DEVICE_API(mdio, mdio_wch_api) = {
 
 #define MDIO_WCH_DEVICE(inst)                                                                      \
 	PINCTRL_DT_INST_DEFINE(inst);                                                              \
-                                                                                                   \
 	static struct mdio_wch_data mdio_wch_data_##inst = {                                       \
 		.placeholder = 0,                                                                  \
 	};                                                                                         \
-	static struct mdio_wch_config mdio_wch_config_##inst = {                                   \
-		.pincfg = PINCTRL_DT_INST_DEV_CONFIG_GET(inst),                                    \
+	static const struct mdio_wch_config mdio_wch_config_##inst = {                             \
+		.pin_cfg = PINCTRL_DT_INST_DEV_CONFIG_GET(inst),                                   \
 	};                                                                                         \
 	DEVICE_DT_INST_DEFINE(inst, &mdio_wch_init, NULL, &mdio_wch_data_##inst,                   \
 			      &mdio_wch_config_##inst, POST_KERNEL, CONFIG_MDIO_INIT_PRIORITY,     \
