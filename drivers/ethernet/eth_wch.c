@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#define DT_DRV_COMPAT wch_ethernet
+#define DT_DRV_COMPAT wch_ch32_ethernet
 
 #define LOG_LEVEL CONFIG_ETHERNET_LOG_LEVEL
 
 #include <zephyr/logging/log.h>
 
-LOG_MODULE_REGISTER(wch_ethernet);
+LOG_MODULE_REGISTER(ethernet_wch);
 
 #include <errno.h>
 #include <stdbool.h>
