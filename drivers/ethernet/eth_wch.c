@@ -22,7 +22,6 @@ LOG_MODULE_REGISTER(ethernet_wch);
 #include <zephyr/net/ethernet.h>
 #include <zephyr/net/phy.h>
 #include <ethernet/eth_stats.h>
-#include <soc.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/drivers/clock_control.h>
 #include <zephyr/drivers/pinctrl.h>

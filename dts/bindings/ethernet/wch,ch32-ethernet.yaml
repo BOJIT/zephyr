@@ -3,6 +3,11 @@
 
 include: [ethernet-controller.yaml, pinctrl-device.yaml]
 
+description: |
+  Ethernet MAC Controller for WCH CH32 series MCUs
+
+compatible: "wch,ch32-ethernet"
+
 properties:
   interrupts:
     required: true
@@ -16,10 +21,5 @@ properties:
     required: true
   phy-connection-type:
     required: true
-    description: |
-      PHY connection to MAC
-    enum:
-      - internal
-      - mdio
   phy-handle:
     required: true
