@@ -392,6 +392,11 @@ static int eth_stm32_hal_start(const struct device *dev)
 
 	LOG_DBG("Starting ETH HAL driver");
 
+	// ETH_MACTransmissionCmd(ENABLE);
+	// ETH_FlushTransmitFIFO();
+	// ETH_MACReceptionCmd(ENABLE);
+	// ETH_DMATransmissionCmd(ENABLE);
+	// ETH_DMAReceptionCmd(ENABLE);
 	// hal_ret = HAL_ETH_Start_IT(heth);
 	// if (hal_ret != HAL_OK) {
 	// 	LOG_ERR("HAL_ETH_Start{_IT} failed");
@@ -494,7 +499,8 @@ static void eth_wch_iface_init(struct net_if *iface)
 		// 			: K_PRIO_COOP(CONFIG_ETH_STM32_HAL_RX_THREAD_PRIO),
 		// 		0, K_NO_WAIT);
 
-		// k_thread_name_set(&dev_data->rx_thread, "wch_eth_rx");
+		// k_thread_name_set(&dev_data->rx_thread, "wch_eth_rx"); // TODO add instance
+		// suffix?
 	}
 }
 
