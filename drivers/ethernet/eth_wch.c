@@ -215,8 +215,10 @@ LOG_MODULE_REGISTER(ethernet_wch, LOG_LEVEL);
 
 #define ETH_DMA_TX_TIMEOUT_MS (20U) /* transmit timeout in milliseconds */
 
-#define ETH_RXBUFNB (4U)
-#define ETH_TXBUFNB (4U)
+#define ETH_RXBUF_NB   (4U)
+#define ETH_TXBUF_NB   (4U)
+#define ETH_RXBUF_SIZE ETH_MAX_PACKET_SIZE // Must be full MTU-sized
+#define ETH_TXBUF_SIZE ETH_MAX_PACKET_SIZE // Can be smaller if required
 
 struct eth_wch_config {
 	ETH_TypeDef *regs;
@@ -250,7 +252,6 @@ struct eth_wch_data {
 #endif
 };
 
-// TODO different if PTP enabled
 struct eth_dma_desc {
 	uint32_t volatile Status;     /* Status */
 	uint32_t ControlBufferSize;   /* Control and Buffer1, Buffer2 lengths */
@@ -261,13 +262,15 @@ struct eth_dma_desc {
 static const struct device *eth_wch_phy_dev =
 	DEVICE_DT_GET(DT_INST_PHANDLE(0, phy_handle)); // TODO move this into init struct
 
-static struct eth_dma_desc dma_rx_desc_tab[ETH_RXBUFNB] __aligned(4);
-static struct eth_dma_desc dma_tx_desc_tab[ETH_TXBUFNB] __aligned(4);
+static struct eth_dma_desc dma_rx_desc_tab[ETH_RXBUF_NB] __aligned(4);
+static struct eth_dma_desc dma_tx_desc_tab[ETH_TXBUF_NB] __aligned(4);
+static struct eth_dma_desc *dma_tx_desc_current;
 
-static uint8_t dma_rx_buffer[ETH_RXBUFNB][NET_ETH_MTU] __aligned(4);
-static uint8_t dma_tx_buffer[ETH_TXBUFNB][NET_ETH_MTU] __aligned(4);
+static uint8_t dma_rx_buffer[ETH_RXBUF_NB][ETH_RXBUF_SIZE] __aligned(4);
+static uint8_t dma_tx_buffer[ETH_TXBUF_NB][ETH_TXBUF_SIZE] __aligned(4);
 
-BUILD_ASSERT(NET_ETH_MTU % 4 == 0, "Buffer size must be a multiple of 4");
+BUILD_ASSERT(ETH_RXBUF_SIZE % 4 == 0, "Buffer size must be a multiple of 4");
+BUILD_ASSERT(ETH_TXBUF_SIZE % 4 == 0, "Buffer size must be a multiple of 4");
 
 // static void setup_mac_filter(ETH_HandleTypeDef *heth)
 // {
@@ -289,14 +292,15 @@ BUILD_ASSERT(NET_ETH_MTU % 4 == 0, "Buffer size must be a multiple of 4");
 
 static void init_tx_dma_desc(ETH_TypeDef *eth)
 {
-	for (int i = 0; i < ETH_TXBUFNB; i++) {
+	for (int i = 0; i < ETH_TXBUF_NB; i++) {
 		dma_tx_desc_tab[i].Status = ETH_DMATxDesc_TCH | ETH_DMATxDesc_IC;
-		dma_tx_desc_tab[i].Buffer1Addr = (uint32_t)(&dma_tx_buffer[i * NET_ETH_MTU]);
+		dma_tx_desc_tab[i].Buffer1Addr = (uint32_t)(&dma_tx_buffer[i * ETH_TXBUF_SIZE]);
 		dma_tx_desc_tab[i].Buffer2NextDescAddr = &dma_tx_desc_tab[i + 1];
 	}
 	// Chain buffers in a ring
-	dma_tx_desc_tab[ETH_TXBUFNB - 1].Buffer2NextDescAddr = &dma_tx_desc_tab[0];
+	dma_tx_desc_tab[ETH_TXBUF_NB - 1].Buffer2NextDescAddr = &dma_tx_desc_tab[0];
 
+	dma_tx_desc_current = dma_tx_desc_tab;
 	eth->DMATDLAR = (uint32_t)dma_tx_desc_tab; // pointer to start of desc. list
 }
 
@@ -305,14 +309,14 @@ static void init_tx_dma_desc(ETH_TypeDef *eth)
  */
 static void init_rx_dma_desc(ETH_TypeDef *eth)
 {
-	for (int i = 0; i < ETH_RXBUFNB; i++) {
+	for (int i = 0; i < ETH_RXBUF_NB; i++) {
 		dma_rx_desc_tab[i].Status = ETH_DMARxDesc_OWN;
-		dma_rx_desc_tab[i].ControlBufferSize = ETH_DMARxDesc_RCH | NET_ETH_MTU;
-		dma_tx_desc_tab[i].Buffer1Addr = (uint32_t)(&dma_rx_buffer[i * NET_ETH_MTU]);
+		dma_rx_desc_tab[i].ControlBufferSize = ETH_DMARxDesc_RCH | ETH_RXBUF_SIZE;
+		dma_tx_desc_tab[i].Buffer1Addr = (uint32_t)(&dma_rx_buffer[i * ETH_RXBUF_SIZE]);
 		dma_rx_desc_tab[i].Buffer2NextDescAddr = &dma_rx_desc_tab[i + 1];
 	}
 	// Chain buffers in a ring
-	dma_rx_desc_tab[ETH_RXBUFNB - 1].Buffer2NextDescAddr = &dma_rx_desc_tab[0];
+	dma_rx_desc_tab[ETH_RXBUF_NB - 1].Buffer2NextDescAddr = &dma_rx_desc_tab[0];
 	eth->DMARDLAR = (uint32_t)dma_rx_desc_tab; // pointer to start of desc. list
 }
 
@@ -358,36 +362,69 @@ static void phy_link_state_changed(const struct device *phy_dev, struct phy_link
 static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 {
 	struct eth_wch_data *data = dev->data;
-	// ETH_HandleTypeDef *heth = &dev_data->heth;
+	const struct eth_wch_config *config = dev->config;
+	ETH_TypeDef *eth = config->regs;
 	int res;
-	size_t total_len;
-	size_t remaining_read;
-	struct eth_stm32_tx_context *ctx = NULL;
-	struct eth_stm32_tx_buffer_header *buf_header = NULL;
-	// HAL_StatusTypeDef hal_ret = HAL_OK;
 
 	__ASSERT_NO_MSG(pkt != NULL);
 	__ASSERT_NO_MSG(pkt->frags != NULL);
 
-	total_len = net_pkt_get_len(pkt);
-	if (total_len > (NET_ETH_MTU * ETH_TXBUFNB)) {
-		LOG_ERR("PKT too big");
-		return -EIO;
+	// Get full length of packet
+	// TODO is this check redundant?
+	size_t total_len = net_pkt_get_len(pkt);
+	if (total_len > (ETH_TXBUF_SIZE * ETH_TXBUF_NB)) {
+		LOG_ERR("Packet spans all available descriptors");
+		return -ENOBUFS;
 	}
 
-	/* the tx context is now owned by the HAL */
-	ctx = NULL;
+	k_mutex_lock(&data->tx_mutex, K_FOREVER); // Only one packet can be transmitted at once
+
+	k_sem_reset(&data->tx_int_sem);
+
+	size_t bytes_remaining = total_len;
+	do {
+		if (dma_tx_desc_current->Status & ETH_DMATxDesc_OWN) {
+			return -EBUSY;
+		}
+
+		// Copy Packet to TX Buf
+		size_t chunk_size =
+			bytes_remaining > ETH_TXBUF_SIZE ? ETH_TXBUF_SIZE : bytes_remaining;
+		if (net_pkt_read(pkt, dma_tx_desc_current->Buffer1Addr, chunk_size)) {
+			res = -ENOBUFS;
+			goto error;
+		}
+
+		// Set descriptor bits and hand to DMA engine
+		if (bytes_remaining == total_len) {
+			dma_tx_desc_current->Status |= ETH_DMATxDesc_FS;
+		}
+
+		dma_tx_desc_current->ControlBufferSize = (chunk_size & ETH_DMATxDesc_TBS1);
+		dma_tx_desc_current = dma_tx_desc_current->Buffer2NextDescAddr;
+		bytes_remaining -= chunk_size;
+
+		if (bytes_remaining == 0) {
+			dma_tx_desc_current->Status |= ETH_DMATxDesc_LS;
+		}
+
+		dma_tx_desc_current->Status |= ETH_DMATxDesc_OWN;
+
+		// Restart TX DMA if halted
+		if (eth->DMASR & ETH_DMASR_TBUS) {
+			eth->DMASR = ETH_DMASR_TBUS;
+			eth->DMATPDR = 0;
+		}
+	} while (bytes_remaining > 0);
 
 	/* Wait for end of TX buffer transmission */
-	/* If the semaphore timeout breaks, it means */
-	/* an error occurred or IT was not fired */
-	// if (k_sem_take(&dev_data->tx_int_sem, K_MSEC(ETH_DMA_TX_TIMEOUT_MS)) != 0) {
-
-	// 	goto error;
-	// }
+	if (k_sem_take(&data->tx_int_sem, K_MSEC(ETH_DMA_TX_TIMEOUT_MS)) != 0) {
+		goto error;
+	}
 
 	res = 0;
 error:
+	k_mutex_unlock(&data->tx_mutex);
 
 	return res;
 }
@@ -423,7 +460,7 @@ static struct net_pkt *eth_rx(const struct device *dev)
 	//      rx_header = rx_header->next) {
 	// 	const size_t index = rx_header - &dma_rx_buffer_header[0];
 
-	// 	__ASSERT_NO_MSG(index < ETH_RXBUFNB);
+	// 	__ASSERT_NO_MSG(index < ETH_RXBUF_NB);
 	// 	if (net_pkt_write(pkt, dma_rx_buffer[index], rx_header->size)) {
 	// 		LOG_ERR("Failed to append RX buffer to "
 	// 			"context buffer");
@@ -494,7 +531,8 @@ static void eth_isr(const struct device *dev)
 	if (status_flags & ETH_DMA_IT_AIS) {
 		if (status_flags & ETH_DMA_IT_RBU) {
 			// if ((ChipId & 0xf0) == 0x10) {
-			// 	((ETH_DMADESCTypeDef *)(((ETH_DMADESCTypeDef *)(ETH->DMACHRDR))
+			// 	((ETH_DMADESCTypeDef *)(((ETH_DMADESCTypeDef
+			// *)(ETH->DMACHRDR))
 			// 					->Buffer2NextDescAddr))
 			// 		->Status = ETH_DMARxDesc_OWN;
 
