@@ -76,6 +76,7 @@ LOG_MODULE_REGISTER(ethernet_wch, LOG_LEVEL);
 #define ETH_Speed_10M   ((uint32_t)0x00000000)
 #define ETH_Speed_100M  ((uint32_t)0x00004000)
 #define ETH_Speed_1000M ((uint32_t)0x00008000)
+#define ETH_Speed_Mask  ((uint32_t)0x0000C000)
 
 /* MAC receive own enable or disable */
 #define ETH_ReceiveOwn_Enable  ((uint32_t)0x00000000)
@@ -241,11 +242,11 @@ struct eth_wch_data {
 	struct k_sem tx_int_sem;
 	K_KERNEL_STACK_MEMBER(rx_thread_stack, CONFIG_ETH_WCH_HAL_RX_THREAD_STACK_SIZE);
 	struct k_thread rx_thread;
-#if defined(CONFIG_ETH_STM32_MULTICAST_FILTER)
+#if defined(CONFIG_ETH_WCH_MULTICAST_FILTER)
 	uint8_t hash_index_cnt[64];
-#endif /* CONFIG_ETH_STM32_MULTICAST_FILTER */
+#endif /* CONFIG_ETH_WCH_MULTICAST_FILTER */
 #if defined(CONFIG_NET_STATISTICS_ETHERNET)
-	struct net_stats_eth stats;
+	struct net_stats_eth stats; // Currently unused
 #endif
 };
 
@@ -257,7 +258,8 @@ struct eth_dma_desc {
 	uint32_t Buffer2NextDescAddr; /* Buffer2 or next descriptor address pointer */
 };
 
-static const struct device *eth_wch_phy_dev = DEVICE_DT_GET(DT_INST_PHANDLE(0, phy_handle));
+static const struct device *eth_wch_phy_dev =
+	DEVICE_DT_GET(DT_INST_PHANDLE(0, phy_handle)); // TODO move this into init struct
 
 static struct eth_dma_desc dma_rx_desc_tab[ETH_RXBUFNB] __aligned(4);
 static struct eth_dma_desc dma_tx_desc_tab[ETH_TXBUFNB] __aligned(4);
@@ -265,7 +267,7 @@ static struct eth_dma_desc dma_tx_desc_tab[ETH_TXBUFNB] __aligned(4);
 static uint8_t dma_rx_buffer[ETH_RXBUFNB][NET_ETH_MTU] __aligned(4);
 static uint8_t dma_tx_buffer[ETH_TXBUFNB][NET_ETH_MTU] __aligned(4);
 
-BUILD_ASSERT(NET_ETH_MTU % 4 == 0, "Rx buffer size must be a multiple of 4");
+BUILD_ASSERT(NET_ETH_MTU % 4 == 0, "Buffer size must be a multiple of 4");
 
 // static void setup_mac_filter(ETH_HandleTypeDef *heth)
 // {
@@ -284,6 +286,74 @@ BUILD_ASSERT(NET_ETH_MTU % 4 == 0, "Rx buffer size must be a multiple of 4");
 
 // 	k_sleep(K_MSEC(1));
 // }
+
+static void init_tx_dma_desc(ETH_TypeDef *eth)
+{
+	for (int i = 0; i < ETH_TXBUFNB; i++) {
+		dma_tx_desc_tab[i].Status = ETH_DMATxDesc_TCH | ETH_DMATxDesc_IC;
+		dma_tx_desc_tab[i].Buffer1Addr = (uint32_t)(&dma_tx_buffer[i * NET_ETH_MTU]);
+		dma_tx_desc_tab[i].Buffer2NextDescAddr = &dma_tx_desc_tab[i + 1];
+	}
+	// Chain buffers in a ring
+	dma_tx_desc_tab[ETH_TXBUFNB - 1].Buffer2NextDescAddr = &dma_tx_desc_tab[0];
+
+	eth->DMATDLAR = (uint32_t)dma_tx_desc_tab; // pointer to start of desc. list
+}
+
+/**
+ * @brief Initialise the recieve descriptor ring with generic attributes
+ */
+static void init_rx_dma_desc(ETH_TypeDef *eth)
+{
+	for (int i = 0; i < ETH_RXBUFNB; i++) {
+		dma_rx_desc_tab[i].Status = ETH_DMARxDesc_OWN;
+		dma_rx_desc_tab[i].ControlBufferSize = ETH_DMARxDesc_RCH | NET_ETH_MTU;
+		dma_tx_desc_tab[i].Buffer1Addr = (uint32_t)(&dma_rx_buffer[i * NET_ETH_MTU]);
+		dma_rx_desc_tab[i].Buffer2NextDescAddr = &dma_rx_desc_tab[i + 1];
+	}
+	// Chain buffers in a ring
+	dma_rx_desc_tab[ETH_RXBUFNB - 1].Buffer2NextDescAddr = &dma_rx_desc_tab[0];
+	eth->DMARDLAR = (uint32_t)dma_rx_desc_tab; // pointer to start of desc. list
+}
+
+static void set_mac_config(const struct device *dev, struct phy_link_state *state)
+{
+	struct eth_wch_data *data = dev->data;
+	const struct eth_wch_config *config = dev->config;
+	ETH_TypeDef *eth = config->regs;
+
+	// Configure Speed and Duplex Mode
+	uint32_t tmpreg = eth->MACCR;
+	tmpreg &= ~ETH_Mode_FullDuplex;
+	tmpreg |= PHY_LINK_IS_FULL_DUPLEX(state->speed) ? ETH_Mode_FullDuplex : ETH_Mode_HalfDuplex;
+
+	tmpreg &= ~ETH_Speed_Mask;
+	tmpreg |= PHY_LINK_IS_SPEED_1000M(state->speed)  ? ETH_Speed_1000M
+		  : PHY_LINK_IS_SPEED_100M(state->speed) ? ETH_Speed_100M
+							 : ETH_Speed_100M;
+}
+
+static void phy_link_state_changed(const struct device *phy_dev, struct phy_link_state *state,
+				   void *user_data)
+{
+	const struct device *dev = (const struct device *)user_data;
+	struct eth_wch_data *data = dev->data;
+
+	ARG_UNUSED(phy_dev);
+
+	/* The MAC also needs to be stopped before changing the MAC
+	 * config. The speed can change without receiving a link down
+	 * callback before.
+	 */
+	eth_wch_stop(dev);
+	if (state->is_up) {
+		set_mac_config(dev, state);
+		eth_wch_start(dev);
+		net_eth_carrier_on(data->iface);
+	} else {
+		net_eth_carrier_off(data->iface);
+	}
+}
 
 static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 {
@@ -418,7 +488,7 @@ static void eth_isr(const struct device *dev)
 	const struct eth_wch_config *config = dev->config;
 	ETH_TypeDef *eth = config->regs;
 
-	uint32_t status_flags = ETH->DMASR;
+	uint32_t status_flags = eth->DMASR;
 
 	/* Error Flags */
 	if (status_flags & ETH_DMA_IT_AIS) {
@@ -429,10 +499,9 @@ static void eth_isr(const struct device *dev)
 			// 		->Status = ETH_DMARxDesc_OWN;
 
 			// 	/* Resume DMA reception */
-			// 	ETH->DMARPDR = 0;
 			// }
+			eth->DMARPDR = 0; // Re-trigger DMA Rx
 			eth->DMASR = ETH_DMA_IT_RBU;
-			// Out of descriptors. Write to RPDR to continue reception
 		}
 		eth->DMASR = ETH_DMA_IT_AIS;
 	}
@@ -504,7 +573,7 @@ static int eth_mac_init(const struct device *dev)
 #endif /* defined(ETH_WCH_USE_INTERNAL_PHY) */
 	);
 
-	eth->MACFFR = (ETH_ReceiveAll_Disable | ETH_PromiscuousMode_Disable |
+	eth->MACFFR = (ETH_ReceiveAll_Enable | ETH_PromiscuousMode_Disable |
 		       ETH_BroadcastFramesReception_Enable | ETH_MulticastFramesFilter_Perfect |
 		       ETH_UnicastFramesFilter_Perfect | ETH_PassControlFrames_BlockAll |
 		       ETH_DestinationAddrFilter_Normal | ETH_SourceAddrFilter_Disable
@@ -535,78 +604,22 @@ static int eth_mac_init(const struct device *dev)
 #endif
 		);
 
-	// ETH_DMATxDescChainInit(DMATxDscrTab, MACTxBuf, ETH_TXBUFNB);
-	// ETH_DMARxDescChainInit(DMARxDscrTab, MACRxBuf, ETH_RXBUFNB);
-
-	// hal_ret = HAL_ETH_Init(heth);
-	// if (hal_ret == HAL_TIMEOUT) {
-	// 	/* HAL Init time out. This could be linked to */
-	// 	/* a recoverable error. Log the issue and continue */
-	// 	/* driver initialisation */
-	// 	LOG_ERR("HAL_ETH_Init Timed out");
-	// } else if (hal_ret != HAL_OK) {
-	// 	LOG_ERR("HAL_ETH_Init failed: %d", hal_ret);
-	// 	return -EINVAL;
-	// }
-
-	/* Tx config init: */
-	// memset(&tx_config, 0, sizeof(ETH_TxPacketConfig));
-	// tx_config.Attributes = ETH_TX_PACKETS_FEATURES_CSUM | ETH_TX_PACKETS_FEATURES_CRCPAD;
-	// tx_config.ChecksumCtrl = IS_ENABLED(CONFIG_ETH_STM32_HW_CHECKSUM)
-	// 				 ? ETH_CHECKSUM_IPHDR_PAYLOAD_INSERT_PHDR_CALC
-	// 				 : ETH_CHECKSUM_DISABLE;
-	// tx_config.CRCPadCtrl = ETH_CRC_PAD_INSERT;
-
-	/* prepare tx buffer header */
-	// for (uint16_t i = 0; i < ETH_TXBUFNB; ++i) {
-	// 	dma_tx_buffer_header[i].tx_buff.buffer = dma_tx_buffer[i];
-	// }
-
-	// Configure TX Descripers
+	init_tx_dma_desc(eth);
+	init_rx_dma_desc(eth);
 
 	return 0;
-}
-
-static void set_mac_config(const struct device *dev, struct phy_link_state *state)
-{
-	struct eth_wch_data *data = dev->data;
-
-	// ETH_HandleTypeDef *heth = &dev_data->heth;
-	// HAL_StatusTypeDef hal_ret = HAL_OK;
-	// ETH_MACConfigTypeDef mac_config = {0};
-
-	// HAL_ETH_GetMACConfig(heth, &mac_config);
-
-	// mac_config.DuplexMode =
-	// 	PHY_LINK_IS_FULL_DUPLEX(state->speed) ? ETH_FULLDUPLEX_MODE : ETH_HALFDUPLEX_MODE;
-
-	// mac_config.Speed = IF_ENABLED(DT_HAS_COMPAT_STATUS_OKAY(st_stm32n6_ethernet),
-	// 		PHY_LINK_IS_SPEED_1000M(state->speed) ? ETH_SPEED_1000M :)
-	// PHY_LINK_IS_SPEED_100M(state->speed) 	? ETH_SPEED_100M 	: ETH_SPEED_10M;
-
-	// hal_ret = HAL_ETH_SetMACConfig(heth, &mac_config);
-	// if (hal_ret != HAL_OK) {
-	// 	LOG_ERR("HAL_ETH_SetMACConfig: failed: %d", hal_ret);
-	// }
 }
 
 static int eth_wch_start(const struct device *dev)
 {
 	struct eth_wch_data *data = dev->data;
-	// ETH_HandleTypeDef *heth = &dev_data->heth;
-	// HAL_StatusTypeDef hal_ret = HAL_OK;
+	const struct eth_wch_config *config = dev->config;
+	ETH_TypeDef *eth = config->regs;
 
 	LOG_DBG("Starting ETH HAL driver");
 
-	// ETH_MACTransmissionCmd(ENABLE);
-	// ETH_FlushTransmitFIFO();
-	// ETH_MACReceptionCmd(ENABLE);
-	// ETH_DMATransmissionCmd(ENABLE);
-	// ETH_DMAReceptionCmd(ENABLE);
-	// hal_ret = HAL_ETH_Start_IT(heth);
-	// if (hal_ret != HAL_OK) {
-	// 	LOG_ERR("HAL_ETH_Start{_IT} failed");
-	// }
+	eth->MACCR |= ETH_MACCR_TE | ETH_MACCR_RE;
+	eth->DMAOMR |= ETH_DMAOMR_FTF | ETH_DMAOMR_ST | ETH_DMAOMR_SR;
 
 	return 0;
 }
@@ -614,43 +627,15 @@ static int eth_wch_start(const struct device *dev)
 static int eth_wch_stop(const struct device *dev)
 {
 	struct eth_wch_data *data = dev->data;
-	// ETH_HandleTypeDef *heth = &dev_data->heth;
-	// HAL_StatusTypeDef hal_ret = HAL_OK;
+	const struct eth_wch_config *config = dev->config;
+	ETH_TypeDef *eth = config->regs;
 
 	LOG_DBG("Stopping ETH HAL driver");
 
-	// hal_ret = HAL_ETH_Stop_IT(heth);
-	// if (hal_ret != HAL_OK) {
-	// 	/* HAL_ETH_Stop{_IT} returns HAL_ERROR only if ETH is
-	// 	 * already stopped */
-	// 	LOG_DBG("HAL_ETH_Stop{_IT} returned error (Ethernet "
-	// 		"is already stopped)");
-	// }
+	ETH->MACCR &= ~(ETH_MACCR_TE | ETH_MACCR_RE);
+	ETH->DMAOMR &= ~(ETH_DMAOMR_ST | ETH_DMAOMR_SR);
 
 	return 0;
-}
-
-// TODO where is this used?
-static void phy_link_state_changed(const struct device *phy_dev, struct phy_link_state *state,
-				   void *user_data)
-{
-	const struct device *dev = (const struct device *)user_data;
-	struct eth_wch_data *data = dev->data;
-
-	ARG_UNUSED(phy_dev);
-
-	/* The MAC also needs to be stopped before changing the MAC
-	 * config. The speed can change without receiving a link down
-	 * callback before.
-	 */
-	eth_wch_stop(dev);
-	if (state->is_up) {
-		set_mac_config(dev, state);
-		eth_wch_start(dev);
-		net_eth_carrier_on(data->iface);
-	} else {
-		net_eth_carrier_off(data->iface);
-	}
 }
 
 static void eth_wch_iface_init(struct net_if *iface)
@@ -748,7 +733,7 @@ static int eth_wch_set_config(const struct device *dev, enum ethernet_config_typ
 #endif /* CONFIG_NET_PROMISCUOUS_MODE */
 #if defined(ETH_WCH_MULTICAST_FILTER)
 	case ETHERNET_CONFIG_TYPE_FILTER:
-		// eth_stm32_mcast_filter(dev, &config->filter); // TODO
+		// setup_mac_filter(dev, &config->filter); // TODO
 		return 0;
 #endif /* ETH_WCH_MULTICAST_FILTER */
 	default:
@@ -767,7 +752,7 @@ static const struct device *eth_wch_get_phy(const struct device *dev)
 #if defined(CONFIG_NET_STATISTICS_ETHERNET)
 static struct net_stats_eth *eth_wch_get_stats(const struct device *dev)
 {
-	struct eth_stm32_hal_dev_data *dev_data = dev->data;
+	// TODO implement!
 
 	return &dev_data->stats;
 }
@@ -795,9 +780,9 @@ static int eth_wch_init(const struct device *dev)
 	}
 
 	/* Enable Internal PHY (note - this is not controlled on a per-peripheral basis!) */
-	// if(DT_NODE_HAS_PROP) {
-	// 	EXTEN->EXTEN_CTR |= EXTEN_ETH_10M_EN;
-	// }
+#if defined(ETH_WCH_USE_INTERNAL_PHY)
+	EXTEN->EXTEN_CTR |= EXTEN_ETH_10M_EN;
+#endif /* defined(ETH_WCH_USE_INTERNAL_PHY) */
 
 	/* configure pinmux */
 	ret = pinctrl_apply_state(config->pin_cfg, PINCTRL_STATE_DEFAULT);
