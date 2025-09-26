@@ -212,8 +212,8 @@ LOG_MODULE_REGISTER(ethernet_wch, LOG_LEVEL);
 
 #define ETH_RXBUF_NB   (4U)
 #define ETH_TXBUF_NB   (4U)
-#define ETH_RXBUF_SIZE ETH_MAX_PACKET_SIZE // Can be smaller if required
-#define ETH_TXBUF_SIZE ETH_MAX_PACKET_SIZE // Can be smaller if required
+#define ETH_RXBUF_SIZE ETH_MAX_PACKET_SIZE /* Currently must be MTU-sized */
+#define ETH_TXBUF_SIZE ETH_MAX_PACKET_SIZE /* Can be smaller if required */
 
 struct eth_wch_config {
 	ETH_TypeDef *regs;
@@ -259,6 +259,7 @@ static const struct device *eth_wch_phy_dev =
 
 static struct eth_dma_desc dma_rx_desc_tab[ETH_RXBUF_NB] __aligned(4);
 static struct eth_dma_desc dma_tx_desc_tab[ETH_TXBUF_NB] __aligned(4);
+static struct eth_dma_desc *dma_rx_desc_current;
 static struct eth_dma_desc *dma_tx_desc_current;
 
 static uint8_t dma_rx_buffer[ETH_RXBUF_NB][ETH_RXBUF_SIZE] __aligned(4);
@@ -294,7 +295,6 @@ static void init_tx_dma_desc(ETH_TypeDef *eth)
 	}
 	// Chain buffers in a ring
 	dma_tx_desc_tab[ETH_TXBUF_NB - 1].Buffer2NextDescAddr = (uint32_t)(&dma_tx_desc_tab[0]);
-
 	dma_tx_desc_current = dma_tx_desc_tab;
 	eth->DMATDLAR = (uint32_t)dma_tx_desc_tab; // pointer to start of desc. list
 }
@@ -312,6 +312,7 @@ static void init_rx_dma_desc(ETH_TypeDef *eth)
 	}
 	// Chain buffers in a ring
 	dma_rx_desc_tab[ETH_RXBUF_NB - 1].Buffer2NextDescAddr = (uint32_t)(&dma_rx_desc_tab[0]);
+	dma_rx_desc_current = dma_rx_desc_tab;
 	eth->DMARDLAR = (uint32_t)dma_rx_desc_tab; // pointer to start of desc. list
 }
 
@@ -320,7 +321,7 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 	struct eth_wch_data *data = dev->data;
 	const struct eth_wch_config *config = dev->config;
 	ETH_TypeDef *eth = config->regs;
-	int res;
+	int res = 0;
 
 	__ASSERT_NO_MSG(pkt != NULL);
 	__ASSERT_NO_MSG(pkt->frags != NULL);
@@ -357,8 +358,6 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 		}
 
 		dma_tx_desc_current->ControlBufferSize = (chunk_size & ETH_DMATxDesc_TBS1);
-		dma_tx_desc_current =
-			(struct eth_dma_desc *)(dma_tx_desc_current->Buffer2NextDescAddr);
 		bytes_remaining -= chunk_size;
 
 		if (bytes_remaining == 0) {
@@ -366,6 +365,8 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 		}
 
 		dma_tx_desc_current->Status |= ETH_DMATxDesc_OWN;
+		dma_tx_desc_current =
+			(struct eth_dma_desc *)(dma_tx_desc_current->Buffer2NextDescAddr);
 
 		// Restart TX DMA if halted
 		if (eth->DMASR & ETH_DMASR_TBUS) {
@@ -388,58 +389,49 @@ error:
 
 static struct net_pkt *eth_rx(const struct device *dev)
 {
+	// NOTE: currently the RX path requires 1 frame per descriptor
 	struct eth_wch_data *data = dev->data;
 	const struct eth_wch_config *config = dev->config;
 	ETH_TypeDef *eth = config->regs;
-	int res;
+	struct net_pkt *pkt = NULL;
 
-	struct net_pkt *pkt;
-	size_t total_len = 0;
-	void *appbuf = NULL;
-
-	// if (HAL_ETH_ReadData(heth, &appbuf) != HAL_OK) {
-	// 	/* no frame available */
-	// 	return NULL;
-	// }
-
-	/* computing total length */
-	// for (rx_header = (struct eth_stm32_rx_buffer_header *)appbuf; rx_header;
-	//      rx_header = rx_header->next) {
-	// 	total_len += rx_header->size;
-	// }
-
-	// pkt = net_pkt_rx_alloc_with_buffer(data->iface, total_len, AF_UNSPEC, 0,
-	// 				   K_MSEC(100));
-	// if (!pkt) {
-	// 	LOG_ERR("Failed to obtain RX buffer");
-	// 	goto release_desc;
-	// }
-
-	// for (rx_header = (struct eth_stm32_rx_buffer_header *)appbuf; rx_header;
-	//      rx_header = rx_header->next) {
-	// 	const size_t index = rx_header - &dma_rx_buffer_header[0];
-
-	// 	__ASSERT_NO_MSG(index < ETH_RXBUF_NB);
-	// 	if (net_pkt_write(pkt, dma_rx_buffer[index], rx_header->size)) {
-	// 		LOG_ERR("Failed to append RX buffer to "
-	// 			"context buffer");
-	// 		net_pkt_unref(pkt);
-	// 		pkt = NULL;
-	// 		goto release_desc;
-	// 	}
-	// }
-
-release_desc:
-	// for (rx_header = (struct eth_stm32_rx_buffer_header *)appbuf; rx_header;
-	//      rx_header = rx_header->next) {
-	// 	rx_header->used = false;
-	// }
-
-	if (!pkt) {
-		goto out;
+	if (dma_rx_desc_current->Status & ETH_DMARxDesc_OWN) {
+		return NULL; /* Not error, simply packet has not arrived yet */
 	}
 
-out:
+	if ((dma_rx_desc_current->Status & ETH_DMARxDesc_ES) ||
+	    ((dma_rx_desc_current->Status & (ETH_DMARxDesc_FS | ETH_DMARxDesc_LS)) !=
+	     (ETH_DMARxDesc_FS | ETH_DMARxDesc_LS))) {
+		goto release_desc; /* Drop descriptor if it is corrupt, or not a full frame */
+	}
+
+	size_t total_len = ((dma_rx_desc_current->Status & ETH_DMARxDesc_FL) >>
+			    ETH_DMARXDESC_FRAME_LENGTHSHIFT) -
+			   sizeof(uint32_t); // This discards CRC (checked by hardware)
+
+	pkt = net_pkt_rx_alloc_with_buffer(data->iface, total_len, AF_UNSPEC, 0, K_MSEC(100));
+	if (!pkt) {
+		LOG_ERR("Failed to obtain RX buffer");
+		goto release_desc;
+	}
+
+	if (net_pkt_write(pkt, (void *)(dma_tx_desc_current->Buffer1Addr), total_len)) {
+		LOG_ERR("Failed to append RX buffer to context buffer");
+		net_pkt_unref(pkt);
+		pkt = NULL;
+		goto release_desc;
+	}
+
+release_desc:
+	dma_rx_desc_current->Status |= ETH_DMARxDesc_OWN;
+	dma_rx_desc_current = (struct eth_dma_desc *)(dma_rx_desc_current->Buffer2NextDescAddr);
+
+	// Restart RX DMA if halted
+	if (eth->DMASR & ETH_DMASR_RBUS) {
+		eth->DMASR = ETH_DMASR_RBUS;
+		eth->DMARPDR = 0;
+	}
+
 	if (!pkt) {
 		eth_stats_update_errors_rx(data->iface);
 	}
@@ -452,7 +444,7 @@ static void rx_thread(void *arg1, void *unused1, void *unused2)
 	const struct device *dev = (const struct device *)arg1;
 	struct eth_wch_data *data = dev->data;
 	struct net_if *iface;
-	struct net_pkt *pkt;
+	struct net_pkt *pkt = NULL;
 	int res;
 
 	ARG_UNUSED(unused1);
