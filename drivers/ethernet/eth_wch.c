@@ -37,11 +37,6 @@ LOG_MODULE_REGISTER(ethernet_wch, LOG_LEVEL);
 
 #define ETH_WCH_USE_INTERNAL_PHY 1 // TODO make this conditional on DTS entry
 
-#define ETH_10M_PHY_MODE HAL_ETH_10M_PHY_MODE
-#define ETH_MII_MODE     HAL_ETH_MII_MODE
-#define ETH_RMII_MODE    HAL_ETH_RMII_MODE
-#define ETH_RGMII_MODE   HAL_ETH_RGMII_MODE
-
 /* Internal 10BASE-T PHY 50R*4 pull-up resistance enable or disable */
 #define ETH_Internal_Pull_Up_Res_Enable  ((uint32_t)0x00100000)
 #define ETH_Internal_Pull_Up_Res_Disable ((uint32_t)0x00000000)
@@ -217,7 +212,7 @@ LOG_MODULE_REGISTER(ethernet_wch, LOG_LEVEL);
 
 #define ETH_RXBUF_NB   (4U)
 #define ETH_TXBUF_NB   (4U)
-#define ETH_RXBUF_SIZE ETH_MAX_PACKET_SIZE // Must be full MTU-sized
+#define ETH_RXBUF_SIZE ETH_MAX_PACKET_SIZE // Can be smaller if required
 #define ETH_TXBUF_SIZE ETH_MAX_PACKET_SIZE // Can be smaller if required
 
 struct eth_wch_config {
@@ -432,11 +427,13 @@ error:
 static struct net_pkt *eth_rx(const struct device *dev)
 {
 	struct eth_wch_data *data = dev->data;
-	// ETH_HandleTypeDef *heth = &dev_data->heth;
+	const struct eth_wch_config *config = dev->config;
+	ETH_TypeDef *eth = config->regs;
+	int res;
+
 	struct net_pkt *pkt;
 	size_t total_len = 0;
 	void *appbuf = NULL;
-	struct eth_stm32_rx_buffer_header *rx_header;
 
 	// if (HAL_ETH_ReadData(heth, &appbuf) != HAL_OK) {
 	// 	/* no frame available */
