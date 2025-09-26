@@ -290,10 +290,10 @@ static void init_tx_dma_desc(ETH_TypeDef *eth)
 	for (int i = 0; i < ETH_TXBUF_NB; i++) {
 		dma_tx_desc_tab[i].Status = ETH_DMATxDesc_TCH | ETH_DMATxDesc_IC;
 		dma_tx_desc_tab[i].Buffer1Addr = (uint32_t)(&dma_tx_buffer[i * ETH_TXBUF_SIZE]);
-		dma_tx_desc_tab[i].Buffer2NextDescAddr = &dma_tx_desc_tab[i + 1];
+		dma_tx_desc_tab[i].Buffer2NextDescAddr = (uint32_t)(&dma_tx_desc_tab[i + 1]);
 	}
 	// Chain buffers in a ring
-	dma_tx_desc_tab[ETH_TXBUF_NB - 1].Buffer2NextDescAddr = &dma_tx_desc_tab[0];
+	dma_tx_desc_tab[ETH_TXBUF_NB - 1].Buffer2NextDescAddr = (uint32_t)(&dma_tx_desc_tab[0]);
 
 	dma_tx_desc_current = dma_tx_desc_tab;
 	eth->DMATDLAR = (uint32_t)dma_tx_desc_tab; // pointer to start of desc. list
@@ -308,50 +308,11 @@ static void init_rx_dma_desc(ETH_TypeDef *eth)
 		dma_rx_desc_tab[i].Status = ETH_DMARxDesc_OWN;
 		dma_rx_desc_tab[i].ControlBufferSize = ETH_DMARxDesc_RCH | ETH_RXBUF_SIZE;
 		dma_tx_desc_tab[i].Buffer1Addr = (uint32_t)(&dma_rx_buffer[i * ETH_RXBUF_SIZE]);
-		dma_rx_desc_tab[i].Buffer2NextDescAddr = &dma_rx_desc_tab[i + 1];
+		dma_rx_desc_tab[i].Buffer2NextDescAddr = (uint32_t)(&dma_rx_desc_tab[i + 1]);
 	}
 	// Chain buffers in a ring
-	dma_rx_desc_tab[ETH_RXBUF_NB - 1].Buffer2NextDescAddr = &dma_rx_desc_tab[0];
+	dma_rx_desc_tab[ETH_RXBUF_NB - 1].Buffer2NextDescAddr = (uint32_t)(&dma_rx_desc_tab[0]);
 	eth->DMARDLAR = (uint32_t)dma_rx_desc_tab; // pointer to start of desc. list
-}
-
-static void set_mac_config(const struct device *dev, struct phy_link_state *state)
-{
-	struct eth_wch_data *data = dev->data;
-	const struct eth_wch_config *config = dev->config;
-	ETH_TypeDef *eth = config->regs;
-
-	// Configure Speed and Duplex Mode
-	uint32_t tmpreg = eth->MACCR;
-	tmpreg &= ~ETH_Mode_FullDuplex;
-	tmpreg |= PHY_LINK_IS_FULL_DUPLEX(state->speed) ? ETH_Mode_FullDuplex : ETH_Mode_HalfDuplex;
-
-	tmpreg &= ~ETH_Speed_Mask;
-	tmpreg |= PHY_LINK_IS_SPEED_1000M(state->speed)  ? ETH_Speed_1000M
-		  : PHY_LINK_IS_SPEED_100M(state->speed) ? ETH_Speed_100M
-							 : ETH_Speed_100M;
-}
-
-static void phy_link_state_changed(const struct device *phy_dev, struct phy_link_state *state,
-				   void *user_data)
-{
-	const struct device *dev = (const struct device *)user_data;
-	struct eth_wch_data *data = dev->data;
-
-	ARG_UNUSED(phy_dev);
-
-	/* The MAC also needs to be stopped before changing the MAC
-	 * config. The speed can change without receiving a link down
-	 * callback before.
-	 */
-	eth_wch_stop(dev);
-	if (state->is_up) {
-		set_mac_config(dev, state);
-		eth_wch_start(dev);
-		net_eth_carrier_on(data->iface);
-	} else {
-		net_eth_carrier_off(data->iface);
-	}
 }
 
 static int eth_tx(const struct device *dev, struct net_pkt *pkt)
@@ -385,7 +346,7 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 		// Copy Packet to TX Buf
 		size_t chunk_size =
 			bytes_remaining > ETH_TXBUF_SIZE ? ETH_TXBUF_SIZE : bytes_remaining;
-		if (net_pkt_read(pkt, dma_tx_desc_current->Buffer1Addr, chunk_size)) {
+		if (net_pkt_read(pkt, (void *)(dma_tx_desc_current->Buffer1Addr), chunk_size)) {
 			res = -ENOBUFS;
 			goto error;
 		}
@@ -396,7 +357,8 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 		}
 
 		dma_tx_desc_current->ControlBufferSize = (chunk_size & ETH_DMATxDesc_TBS1);
-		dma_tx_desc_current = dma_tx_desc_current->Buffer2NextDescAddr;
+		dma_tx_desc_current =
+			(struct eth_dma_desc *)(dma_tx_desc_current->Buffer2NextDescAddr);
 		bytes_remaining -= chunk_size;
 
 		if (bytes_remaining == 0) {
@@ -446,7 +408,7 @@ static struct net_pkt *eth_rx(const struct device *dev)
 	// 	total_len += rx_header->size;
 	// }
 
-	// pkt = net_pkt_rx_alloc_with_buffer(get_iface(dev_data), total_len, AF_UNSPEC, 0,
+	// pkt = net_pkt_rx_alloc_with_buffer(data->iface, total_len, AF_UNSPEC, 0,
 	// 				   K_MSEC(100));
 	// if (!pkt) {
 	// 	LOG_ERR("Failed to obtain RX buffer");
@@ -479,7 +441,7 @@ release_desc:
 
 out:
 	if (!pkt) {
-		eth_stats_update_errors_rx(get_iface(dev_data));
+		eth_stats_update_errors_rx(data->iface);
 	}
 
 	return pkt;
@@ -560,9 +522,30 @@ static void eth_isr(const struct device *dev)
 	}
 }
 
-static struct net_if *get_iface(struct eth_wch_data *data)
+static int eth_wch_start(const struct device *dev)
 {
-	return data->iface;
+	const struct eth_wch_config *config = dev->config;
+	ETH_TypeDef *eth = config->regs;
+
+	LOG_DBG("Starting ETH HAL driver");
+
+	eth->MACCR |= ETH_MACCR_TE | ETH_MACCR_RE;
+	eth->DMAOMR |= ETH_DMAOMR_FTF | ETH_DMAOMR_ST | ETH_DMAOMR_SR;
+
+	return 0;
+}
+
+static int eth_wch_stop(const struct device *dev)
+{
+	const struct eth_wch_config *config = dev->config;
+	ETH_TypeDef *eth = config->regs;
+
+	LOG_DBG("Stopping ETH HAL driver");
+
+	eth->MACCR &= ~(ETH_MACCR_TE | ETH_MACCR_RE);
+	eth->DMAOMR &= ~(ETH_DMAOMR_ST | ETH_DMAOMR_SR);
+
+	return 0;
 }
 
 static void generate_mac(uint8_t *mac_addr, bool random)
@@ -577,6 +560,44 @@ static void generate_mac(uint8_t *mac_addr, bool random)
 	if (random) {
 		// Generate random address based on WCH OUI (burned into the chip)
 		gen_random_mac(mac_addr, mac_addr[0], mac_addr[1], mac_addr[2]);
+	}
+}
+
+static void set_mac_config(const struct device *dev, struct phy_link_state *state)
+{
+	const struct eth_wch_config *config = dev->config;
+	ETH_TypeDef *eth = config->regs;
+
+	// Configure Speed and Duplex Mode
+	uint32_t tmpreg = eth->MACCR;
+	tmpreg &= ~ETH_Mode_FullDuplex;
+	tmpreg |= PHY_LINK_IS_FULL_DUPLEX(state->speed) ? ETH_Mode_FullDuplex : ETH_Mode_HalfDuplex;
+
+	tmpreg &= ~ETH_Speed_Mask;
+	tmpreg |= PHY_LINK_IS_SPEED_1000M(state->speed)  ? ETH_Speed_1000M
+		  : PHY_LINK_IS_SPEED_100M(state->speed) ? ETH_Speed_100M
+							 : ETH_Speed_100M;
+}
+
+static void phy_link_state_changed(const struct device *phy_dev, struct phy_link_state *state,
+				   void *user_data)
+{
+	const struct device *dev = (const struct device *)user_data;
+	struct eth_wch_data *data = dev->data;
+
+	ARG_UNUSED(phy_dev);
+
+	/* The MAC also needs to be stopped before changing the MAC
+	 * config. The speed can change without receiving a link down
+	 * callback before.
+	 */
+	eth_wch_stop(dev);
+	if (state->is_up) {
+		set_mac_config(dev, state);
+		eth_wch_start(dev);
+		net_eth_carrier_on(data->iface);
+	} else {
+		net_eth_carrier_off(data->iface);
 	}
 }
 
@@ -614,7 +635,7 @@ static int eth_mac_init(const struct device *dev)
 		       ETH_DestinationAddrFilter_Normal | ETH_SourceAddrFilter_Disable
 #if defined(CONFIG_NET_PROMISCUOUS_MODE)
 		       | ETH_PromiscuousMode_Enable
-#endif defined(CONFIG_NET_PROMISCUOUS_MODE)
+#endif /* defined(CONFIG_NET_PROMISCUOUS_MODE) */
 	);
 
 	eth->MACHTHR = 0x0;
@@ -641,34 +662,6 @@ static int eth_mac_init(const struct device *dev)
 
 	init_tx_dma_desc(eth);
 	init_rx_dma_desc(eth);
-
-	return 0;
-}
-
-static int eth_wch_start(const struct device *dev)
-{
-	struct eth_wch_data *data = dev->data;
-	const struct eth_wch_config *config = dev->config;
-	ETH_TypeDef *eth = config->regs;
-
-	LOG_DBG("Starting ETH HAL driver");
-
-	eth->MACCR |= ETH_MACCR_TE | ETH_MACCR_RE;
-	eth->DMAOMR |= ETH_DMAOMR_FTF | ETH_DMAOMR_ST | ETH_DMAOMR_SR;
-
-	return 0;
-}
-
-static int eth_wch_stop(const struct device *dev)
-{
-	struct eth_wch_data *data = dev->data;
-	const struct eth_wch_config *config = dev->config;
-	ETH_TypeDef *eth = config->regs;
-
-	LOG_DBG("Stopping ETH HAL driver");
-
-	ETH->MACCR &= ~(ETH_MACCR_TE | ETH_MACCR_RE);
-	ETH->DMAOMR &= ~(ETH_DMAOMR_ST | ETH_DMAOMR_SR);
 
 	return 0;
 }
