@@ -26,6 +26,8 @@ LOG_MODULE_REGISTER(mdio_wch, LOG_LEVEL);
 
 #define PHY_RESPONSE_TIMEOUT_MS 20
 
+#define ETH_WCH_USE_INTERNAL_PHY 1 // TODO make this conditional on DTS entry
+
 struct mdio_wch_config {
 	ETH_TypeDef *regs;
 	const struct device *clk_dev;
@@ -57,6 +59,7 @@ static int mdio_wch_read(const struct device *dev, uint8_t prtad, uint8_t regad,
 	do {
 		if ((k_uptime_get_32() - read_start) > PHY_RESPONSE_TIMEOUT_MS) {
 			k_sem_give(&dev_data->sem);
+			LOG_ERR("Read: PHY Timeout!");
 			return -EIO;
 		}
 
@@ -67,6 +70,8 @@ static int mdio_wch_read(const struct device *dev, uint8_t prtad, uint8_t regad,
 
 	k_sem_give(&dev_data->sem);
 
+	LOG_WRN("MDIO: Fetch %u, %u", regad, *data);
+
 	return 0;
 }
 
@@ -74,6 +79,8 @@ static int mdio_wch_write(const struct device *dev, uint8_t prtad, uint8_t regad
 {
 	struct mdio_wch_data *const dev_data = dev->data;
 	const struct mdio_wch_config *const config = dev->config;
+
+	LOG_WRN("MDIO: Write %u, %u", regad, data);
 
 	k_sem_take(&dev_data->sem, K_FOREVER);
 
@@ -91,6 +98,7 @@ static int mdio_wch_write(const struct device *dev, uint8_t prtad, uint8_t regad
 	do {
 		if ((k_uptime_get_32() - read_start) > PHY_RESPONSE_TIMEOUT_MS) {
 			k_sem_give(&dev_data->sem);
+			LOG_ERR("Write: PHY Timeout!");
 			return -EIO;
 		}
 
@@ -115,6 +123,22 @@ static int mdio_wch_init(const struct device *dev)
 		return ret;
 	}
 
+#if defined(ETH_WCH_USE_INTERNAL_PHY)
+	/* PHY is clocked by separate PLL3 */
+	RCC->CTLR &= ~RCC_PLL3ON;
+	RCC->CFGR2 &= ~CFGR2_PREDIV2;
+	RCC->CFGR2 |= ~RCC_PREDIV2_Div2; /* TODO make this config part of clock control subsystem */
+	RCC->CFGR2 &= ~CFGR2_PLL3MUL;
+	RCC->CFGR2 |= RCC_PLL3Mul_15; /* 60 MHz clock */
+	RCC->CTLR |= RCC_PLL3ON;
+	while (RCC->CTLR & RCC_PLL3RDY)
+		;
+
+	EXTEN->EXTEN_CTR |= EXTEN_ETH_10M_EN;
+
+	LOG_INF("Internal PHY Enabled");
+#endif /* defined(ETH_WCH_USE_INTERNAL_PHY) */
+
 	/* configure pinmux */
 	ret = pinctrl_apply_state(config->pin_cfg, PINCTRL_STATE_DEFAULT);
 	if (ret < 0) {
@@ -135,6 +159,7 @@ static DEVICE_API(mdio, mdio_wch_api) = {
 	PINCTRL_DT_INST_DEFINE(inst);                                                              \
 	static struct mdio_wch_data mdio_wch_data_##inst;                                          \
 	static const struct mdio_wch_config mdio_wch_config_##inst = {                             \
+		.regs = (ETH_TypeDef *)DT_REG_ADDR(DT_INST_PARENT(inst)),                          \
 		.clk_dev = DEVICE_DT_GET(DT_CLOCKS_CTLR(DT_INST_PARENT(inst))),                    \
 		.clk_id = DT_CLOCKS_CELL(DT_INST_PARENT(inst), id),                                \
 		.pin_cfg = PINCTRL_DT_INST_DEV_CONFIG_GET(inst),                                   \

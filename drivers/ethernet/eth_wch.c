@@ -798,19 +798,19 @@ static int eth_wch_init(const struct device *dev)
 	}
 
 	/* Enable Internal PHY (note - this is not controlled on a per-peripheral basis!) */
-#if defined(ETH_WCH_USE_INTERNAL_PHY)
-	/* PHY is clocked by separate PLL3 */
-	RCC->CTLR &= ~RCC_PLL3ON;
-	RCC->CFGR2 &= ~CFGR2_PREDIV2;
-	RCC->CFGR2 |= ~RCC_PREDIV2_Div2; /* TODO make this config part of clock control subsystem */
-	RCC->CFGR2 &= ~CFGR2_PLL3MUL;
-	RCC->CFGR2 |= RCC_PLL3Mul_15; /* 60 MHz clock */
-	RCC->CTLR |= RCC_PLL3ON;
-	while (RCC->CTLR & RCC_PLL3RDY)
-		;
+	// #if defined(ETH_WCH_USE_INTERNAL_PHY)
+	// 	/* PHY is clocked by separate PLL3 */
+	// 	RCC->CTLR &= ~RCC_PLL3ON;
+	// 	RCC->CFGR2 &= ~CFGR2_PREDIV2;
+	// 	RCC->CFGR2 |= ~RCC_PREDIV2_Div2; /* TODO make this config part of clock control
+	// subsystem */ 	RCC->CFGR2 &= ~CFGR2_PLL3MUL; 	RCC->CFGR2 |= RCC_PLL3Mul_15; /* 60 MHz clock
+	// */ 	RCC->CTLR |= RCC_PLL3ON; 	while (RCC->CTLR & RCC_PLL3RDY)
+	// 		;
 
-	EXTEN->EXTEN_CTR |= EXTEN_ETH_10M_EN;
-#endif /* defined(ETH_WCH_USE_INTERNAL_PHY) */
+	// 	EXTEN->EXTEN_CTR |= EXTEN_ETH_10M_EN;
+
+	// 	LOG_INF("PHY Powered On..");
+	// #endif /* defined(ETH_WCH_USE_INTERNAL_PHY) */
 
 	/* Software Reset of MAC peripherals */
 	RCC->AHBRSTR |= RCC_ETHMACRST;
