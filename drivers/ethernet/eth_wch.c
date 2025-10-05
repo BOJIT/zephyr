@@ -600,10 +600,8 @@ static int eth_mac_init(const struct device *dev)
 	ETH_TypeDef *eth = config->regs;
 
 	eth->DMABMR |= ETH_DMABMR_SR;
-	k_usleep(10);
-	while (eth->DMABMR & ETH_DMABMR_SR) {
-		k_msleep(10);
-	}
+	while (eth->DMABMR & ETH_DMABMR_SR)
+		;
 
 	/* Set MAC Address in Hardware */
 	eth->MACA0HR = (data->mac_addr[5] << 8) | data->mac_addr[4];
@@ -778,53 +776,6 @@ static struct net_stats_eth *eth_wch_get_stats(const struct device *dev)
 }
 #endif /* CONFIG_NET_STATISTICS_ETHERNET */
 
-void RCC_PREDIV2Config(uint32_t RCC_PREDIV2_Div) // temp
-{
-	uint32_t tmpreg = 0;
-
-	tmpreg = RCC->CFGR2;
-	tmpreg &= ~CFGR2_PREDIV2;
-	tmpreg |= RCC_PREDIV2_Div;
-	RCC->CFGR2 = tmpreg;
-}
-
-void RCC_PLL3Config(uint32_t RCC_PLL3Mul) // temp
-{
-	uint32_t tmpreg = 0;
-
-	tmpreg = RCC->CFGR2;
-	tmpreg &= ~CFGR2_PLL3MUL;
-	tmpreg |= RCC_PLL3Mul;
-	RCC->CFGR2 = tmpreg;
-}
-
-FlagStatus RCC_GetFlagStatus(uint8_t RCC_FLAG) // temp
-{
-	uint32_t tmp = 0;
-	uint32_t statusreg = 0;
-
-	FlagStatus bitstatus = RESET;
-	tmp = RCC_FLAG >> 5;
-
-	if (tmp == 1) {
-		statusreg = RCC->CTLR;
-	} else if (tmp == 2) {
-		statusreg = RCC->BDCTLR;
-	} else {
-		statusreg = RCC->RSTSCKR;
-	}
-
-	tmp = RCC_FLAG & 0x1F;
-
-	if ((statusreg & ((uint32_t)1 << tmp)) != (uint32_t)RESET) {
-		bitstatus = SET;
-	} else {
-		bitstatus = RESET;
-	}
-
-	return bitstatus;
-}
-
 static int eth_wch_init(const struct device *dev)
 {
 	struct eth_wch_data *data = dev->data;
@@ -848,11 +799,14 @@ static int eth_wch_init(const struct device *dev)
 
 	/* Enable Internal PHY (note - this is not controlled on a per-peripheral basis!) */
 #if defined(ETH_WCH_USE_INTERNAL_PHY)
-	RCC->CTLR &= ~(1 << 28);             // Disable PLL3
-	RCC_PREDIV2Config(RCC_PREDIV2_Div2); /* HSE = 8M */
-	RCC_PLL3Config(RCC_PLL3Mul_15);      /* 4M*15 = 60MHz */
-	RCC->CTLR |= (1 << 28);              // Enable PLL3
-	while (RESET == RCC_GetFlagStatus(RCC_FLAG_PLL3RDY))
+	/* PHY is clocked by separate PLL3 */
+	RCC->CTLR &= ~RCC_PLL3ON;
+	RCC->CFGR2 &= ~CFGR2_PREDIV2;
+	RCC->CFGR2 |= ~RCC_PREDIV2_Div2; /* TODO make this config part of clock control subsystem */
+	RCC->CFGR2 &= ~CFGR2_PLL3MUL;
+	RCC->CFGR2 |= RCC_PLL3Mul_15; /* 60 MHz clock */
+	RCC->CTLR |= RCC_PLL3ON;
+	while (RCC->CTLR & RCC_PLL3RDY)
 		;
 
 	EXTEN->EXTEN_CTR |= EXTEN_ETH_10M_EN;
@@ -871,7 +825,7 @@ static int eth_wch_init(const struct device *dev)
 
 	// Generate MAC address (once at boot)
 	generate_mac(data->mac_addr, config->use_random_mac);
-	LOG_WRN("MAC %02x:%02x:%02x:%02x:%02x:%02x", data->mac_addr[0], data->mac_addr[1],
+	LOG_DBG("MAC %02x:%02x:%02x:%02x:%02x:%02x", data->mac_addr[0], data->mac_addr[1],
 		data->mac_addr[2], data->mac_addr[3], data->mac_addr[4], data->mac_addr[5]);
 
 	return 0;
