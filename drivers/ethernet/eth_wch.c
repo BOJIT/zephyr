@@ -568,7 +568,7 @@ static void set_mac_config(const struct device *dev, struct phy_link_state *stat
 	tmpreg &= ~ETH_Speed_Mask;
 	tmpreg |= PHY_LINK_IS_SPEED_1000M(state->speed)  ? ETH_Speed_1000M
 		  : PHY_LINK_IS_SPEED_100M(state->speed) ? ETH_Speed_100M
-							 : ETH_Speed_100M;
+							 : ETH_Speed_10M;
 }
 
 static void phy_link_state_changed(const struct device *phy_dev, struct phy_link_state *state,
@@ -825,7 +825,7 @@ static int eth_wch_init(const struct device *dev)
 
 	// Generate MAC address (once at boot)
 	generate_mac(data->mac_addr, config->use_random_mac);
-	LOG_DBG("MAC %02x:%02x:%02x:%02x:%02x:%02x", data->mac_addr[0], data->mac_addr[1],
+	LOG_INF("MAC %02x:%02x:%02x:%02x:%02x:%02x", data->mac_addr[0], data->mac_addr[1],
 		data->mac_addr[2], data->mac_addr[3], data->mac_addr[4], data->mac_addr[5]);
 
 	return 0;
