@@ -6,6 +6,8 @@ config SOC_FAMILY_CH32V
 	select RISCV
 	select BUILD_OUTPUT_HEX
 	select CH32V00X_SYSTICK
+	select ARCH_HAS_CUSTOM_CPU_IDLE
+	select ARCH_HAS_CUSTOM_CPU_ATOMIC_IDLE
 	imply XIP
 
 if SOC_FAMILY_CH32V
@@ -16,6 +18,13 @@ config VECTOR_TABLE_SIZE
 	help
 	  This option defines the total number of interrupt and exception
 	  vectors in the vector table.
+
+config SOC_CH32V_CPU_IDLE_GATING
+	bool
+	help
+	  This option determines whether the entering CPU idle mode can be
+	  gated by individual drivers. When this option is disabled, CPU idle
+	  mode is always permitted.
 
 rsource "*/Kconfig"
 
