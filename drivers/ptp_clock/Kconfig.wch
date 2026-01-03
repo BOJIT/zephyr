@@ -1,0 +1,9 @@
+# Copyright 2025 NXP
+# SPDX-License-Identifier: Apache-2.0
+
+config PTP_CLOCK_WCH
+	bool "WCH PTP Clock driver"
+	default y
+	depends on DT_HAS_WCH_PTP_CLOCK_ENABLED
+	help
+	  Enable WCH PTP clock support.

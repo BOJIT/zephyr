@@ -41,7 +41,7 @@ LOG_MODULE_REGISTER(ethernet_wch, CONFIG_ETHERNET_LOG_LEVEL);
 #define ETH_DMA_TX_TIMEOUT_MS (20U) /* transmit timeout in milliseconds */
 
 #define ETH_RXBUF_NB   (4U)
-#define ETH_TXBUF_NB   (4U)
+#define ETH_TXBUF_NB   (2U)
 #define ETH_RXBUF_SIZE ETH_MAX_PACKET_SIZE /* Currently must be MTU-sized */
 #define ETH_TXBUF_SIZE ETH_MAX_PACKET_SIZE /* Can be smaller if required */
 
@@ -63,6 +63,10 @@ struct eth_wch_config {
 
 	const struct pinctrl_dev_config *pin_cfg;
 	void (*irq_config_func)(const struct device *dev);
+
+#ifdef CONFIG_PTP_CLOCK_WCH
+	const struct device *ptp_clock;
+#endif /* CONFIG_PTP_CLOCK_WCH */
 };
 
 struct eth_wch_data {
@@ -80,14 +84,18 @@ struct eth_wch_data {
 #endif /* CONFIG_ETH_WCH_MULTICAST_FILTER */
 #if defined(CONFIG_NET_STATISTICS_ETHERNET)
 	struct net_stats_eth stats;
-#endif
+#endif /* CONFIG_NET_STATISTICS_ETHERNET */
 };
 
 struct eth_dma_desc {
-	uint32_t volatile Status;     /* Status */
-	uint32_t ControlBufferSize;   /* Control and Buffer1, Buffer2 lengths */
-	uint32_t Buffer1Addr;         /* Buffer1 address pointer */
-	uint32_t Buffer2NextDescAddr; /* Buffer2 or next descriptor address pointer */
+	uint32_t volatile status;
+	uint32_t control_buffer_size;
+	uint32_t buffer_1_address;
+	uint32_t buffer_2_next_descriptor;
+#ifdef CONFIG_PTP_CLOCK_WCH
+	uint32_t buffer_1_backup;
+	uint32_t buffer_2_backup;
+#endif /* CONFIG_PTP_CLOCK_WCH */
 };
 
 /* NOTE: PLLMUL of 12.5 unreachable */
@@ -173,6 +181,15 @@ static void setup_mac_filter(ETH_TypeDef *eth)
 	);
 }
 
+#ifdef CONFIG_PTP_CLOCK_WCH
+static inline uint32_t subsec_to_nsec(uint32_t subsec)
+{
+	uint64_t val = subsec * 1000000000ll;
+	val >>= 31;
+	return val;
+}
+#endif /* CONFIG_PTP_CLOCK_WCH */
+
 static void set_mac_addr(ETH_TypeDef *eth, uint8_t mac[NET_ETH_ADDR_LEN], struct net_if *iface)
 {
 	eth->MACA0HR = (mac[5] << 8) | mac[4];
@@ -183,13 +200,20 @@ static void set_mac_addr(ETH_TypeDef *eth, uint8_t mac[NET_ETH_ADDR_LEN], struct
 static void init_tx_dma_desc(ETH_TypeDef *eth)
 {
 	for (int i = 0; i < ETH_TXBUF_NB; i++) {
-		dma_tx_desc_tab[i].Status = ETH_DMATxDesc_TCH | ETH_DMATxDesc_IC;
-		dma_tx_desc_tab[i].Buffer1Addr = (uint32_t)(&dma_tx_buffer[i * ETH_TXBUF_SIZE]);
-		dma_tx_desc_tab[i].ControlBufferSize = 0;
-		dma_tx_desc_tab[i].Buffer2NextDescAddr = (uint32_t)(&dma_tx_desc_tab[i + 1]);
+		dma_tx_desc_tab[i].status = ETH_DMATxDesc_TCH | ETH_DMATxDesc_IC;
+		dma_tx_desc_tab[i].buffer_1_address =
+			(uint32_t)(&dma_tx_buffer[i * ETH_TXBUF_SIZE]);
+		dma_tx_desc_tab[i].control_buffer_size = 0;
+		dma_tx_desc_tab[i].buffer_2_next_descriptor = (uint32_t)(&dma_tx_desc_tab[i + 1]);
+
+#ifdef CONFIG_PTP_CLOCK_WCH
+		dma_tx_desc_tab[i].buffer_1_backup = dma_tx_desc_tab[i].buffer_1_address;
+		dma_tx_desc_tab[i].buffer_2_backup = dma_tx_desc_tab[i].buffer_2_next_descriptor;
+#endif /* CONFIG_PTP_CLOCK_WCH */
 	}
 	/* Chain buffers in a ring */
-	dma_tx_desc_tab[ETH_TXBUF_NB - 1].Buffer2NextDescAddr = (uint32_t)(&dma_tx_desc_tab[0]);
+	dma_tx_desc_tab[ETH_TXBUF_NB - 1].buffer_2_next_descriptor =
+		(uint32_t)(&dma_tx_desc_tab[0]);
 	dma_tx_desc_current = dma_tx_desc_tab;
 	eth->DMATDLAR = (uint32_t)dma_tx_desc_tab; /* pointer to start of desc. list */
 }
@@ -200,13 +224,20 @@ static void init_tx_dma_desc(ETH_TypeDef *eth)
 static void init_rx_dma_desc(ETH_TypeDef *eth)
 {
 	for (int i = 0; i < ETH_RXBUF_NB; i++) {
-		dma_rx_desc_tab[i].Status = ETH_DMARxDesc_OWN;
-		dma_rx_desc_tab[i].ControlBufferSize = ETH_DMARxDesc_RCH | ETH_RXBUF_SIZE;
-		dma_rx_desc_tab[i].Buffer1Addr = (uint32_t)(&dma_rx_buffer[i * ETH_RXBUF_SIZE]);
-		dma_rx_desc_tab[i].Buffer2NextDescAddr = (uint32_t)(&dma_rx_desc_tab[i + 1]);
+		dma_rx_desc_tab[i].status = ETH_DMARxDesc_OWN;
+		dma_rx_desc_tab[i].control_buffer_size = ETH_DMARxDesc_RCH | ETH_RXBUF_SIZE;
+		dma_rx_desc_tab[i].buffer_1_address =
+			(uint32_t)(&dma_rx_buffer[i * ETH_RXBUF_SIZE]);
+		dma_rx_desc_tab[i].buffer_2_next_descriptor = (uint32_t)(&dma_rx_desc_tab[i + 1]);
+
+#ifdef CONFIG_PTP_CLOCK_WCH
+		dma_rx_desc_tab[i].buffer_1_backup = dma_rx_desc_tab[i].buffer_1_address;
+		dma_rx_desc_tab[i].buffer_2_backup = dma_rx_desc_tab[i].buffer_2_next_descriptor;
+#endif /* CONFIG_PTP_CLOCK_WCH */
 	}
 	/* Chain buffers in a ring */
-	dma_rx_desc_tab[ETH_RXBUF_NB - 1].Buffer2NextDescAddr = (uint32_t)(&dma_rx_desc_tab[0]);
+	dma_rx_desc_tab[ETH_RXBUF_NB - 1].buffer_2_next_descriptor =
+		(uint32_t)(&dma_rx_desc_tab[0]);
 	dma_rx_desc_current = dma_rx_desc_tab;
 	eth->DMARDLAR = (uint32_t)dma_rx_desc_tab; /* pointer to start of desc. list */
 }
@@ -236,9 +267,10 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 	k_sem_reset(&data->tx_int_sem);
 
 	size_t bytes_remaining = total_len;
+	struct eth_dma_desc *first_descriptor = dma_tx_desc_current;
 
 	do {
-		if ((dma_tx_desc_current->Status & ETH_DMATxDesc_OWN) != 0U) {
+		if ((dma_tx_desc_current->status & ETH_DMATxDesc_OWN) != 0U) {
 			eth_stats_update_errors_tx(data->iface);
 			LOG_ERR("No Descriptors Available");
 			res = -EBUSY;
@@ -248,8 +280,8 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 		/* Copy Packet to TX Buf */
 		size_t chunk_size =
 			bytes_remaining > ETH_TXBUF_SIZE ? ETH_TXBUF_SIZE : bytes_remaining;
-		if (net_pkt_read(pkt, (void *)(dma_tx_desc_current->Buffer1Addr), chunk_size) !=
-		    0U) {
+		if (net_pkt_read(pkt, (void *)(dma_tx_desc_current->buffer_1_address),
+				 chunk_size) != 0U) {
 			eth_stats_update_errors_tx(data->iface);
 			LOG_ERR("Could not read descriptor buffer!");
 			res = -ENOBUFS;
@@ -257,18 +289,22 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 		}
 
 		/* Set descriptor bits and hand to DMA engine */
+		dma_tx_desc_current->status &= ~ETH_DMATxDesc_TTSE;
 		if (bytes_remaining == total_len) {
-			dma_tx_desc_current->Status |= ETH_DMATxDesc_FS;
+			dma_tx_desc_current->status |= ETH_DMATxDesc_FS;
+#ifdef CONFIG_PTP_CLOCK_WCH
+			dma_tx_desc_current->status |= ETH_DMATxDesc_TTSE;
+#endif /* CONFIG_PTP_CLOCK_WCH */
 		}
 
-		dma_tx_desc_current->ControlBufferSize = (chunk_size & ETH_DMATxDesc_TBS1);
+		dma_tx_desc_current->control_buffer_size = (chunk_size & ETH_DMATxDesc_TBS1);
 		bytes_remaining -= chunk_size;
 
 		if (bytes_remaining == 0) {
-			dma_tx_desc_current->Status |= ETH_DMATxDesc_LS;
+			dma_tx_desc_current->status |= ETH_DMATxDesc_LS;
 		}
 
-		dma_tx_desc_current->Status |= ETH_DMATxDesc_OWN;
+		dma_tx_desc_current->status |= ETH_DMATxDesc_OWN;
 
 		/* Restart TX DMA if halted */
 		if ((eth->DMASR & ETH_DMASR_TBUS) != 0U) {
@@ -277,7 +313,7 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 		}
 
 		dma_tx_desc_current =
-			(struct eth_dma_desc *)(dma_tx_desc_current->Buffer2NextDescAddr);
+			(struct eth_dma_desc *)(dma_tx_desc_current->buffer_2_next_descriptor);
 	} while (bytes_remaining > 0);
 
 	/* Wait for end of TX buffer transmission */
@@ -287,6 +323,21 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 		res = -EIO;
 		goto error;
 	}
+
+#ifdef CONFIG_PTP_CLOCK_WCH
+	/* Set Timestamp if present */
+	if ((first_descriptor->status & ETH_DMATxDesc_TTSS) != 0U) {
+		pkt->timestamp.second = first_descriptor->buffer_2_next_descriptor;
+		pkt->timestamp.nanosecond = subsec_to_nsec(first_descriptor->buffer_1_address);
+		if (pkt->timestamp.second != UINT64_MAX) {
+			net_pkt_set_tx_timestamping(pkt, true);
+		}
+
+		/* Restore overwritten registers */
+		first_descriptor->buffer_1_address = first_descriptor->buffer_1_backup;
+		first_descriptor->buffer_2_next_descriptor = first_descriptor->buffer_2_backup;
+	}
+#endif /* CONFIG_PTP_CLOCK_WCH */
 
 	res = 0;
 error:
@@ -303,17 +354,17 @@ static struct net_pkt *eth_rx(const struct device *dev)
 	ETH_TypeDef *eth = config->regs;
 	struct net_pkt *pkt = NULL;
 
-	if ((dma_rx_desc_current->Status & ETH_DMARxDesc_OWN) != 0U) {
+	if ((dma_rx_desc_current->status & ETH_DMARxDesc_OWN) != 0U) {
 		return NULL; /* Not error, simply packet has not arrived yet */
 	}
 
-	if (((dma_rx_desc_current->Status & ETH_DMARxDesc_ES) != 0U) ||
-	    ((dma_rx_desc_current->Status & (ETH_DMARxDesc_FS | ETH_DMARxDesc_LS)) !=
+	if (((dma_rx_desc_current->status & ETH_DMARxDesc_ES) != 0U) ||
+	    ((dma_rx_desc_current->status & (ETH_DMARxDesc_FS | ETH_DMARxDesc_LS)) !=
 	     (ETH_DMARxDesc_FS | ETH_DMARxDesc_LS))) {
 		goto release_desc; /* Drop descriptor if it is corrupt, or not a full frame */
 	}
 
-	size_t total_len = ((dma_rx_desc_current->Status & ETH_DMARxDesc_FL) >>
+	size_t total_len = ((dma_rx_desc_current->status & ETH_DMARxDesc_FL) >>
 			    ETH_DMARXDESC_FRAME_LENGTHSHIFT) -
 			   sizeof(uint32_t); /* This discards CRC (checked by hardware) */
 
@@ -323,7 +374,7 @@ static struct net_pkt *eth_rx(const struct device *dev)
 		goto release_desc;
 	}
 
-	if (net_pkt_write(pkt, (void *)(dma_rx_desc_current->Buffer1Addr), total_len) != 0) {
+	if (net_pkt_write(pkt, (void *)(dma_rx_desc_current->buffer_1_address), total_len) != 0) {
 		LOG_ERR("Failed to append RX buffer to context buffer");
 		net_pkt_unref(pkt);
 		pkt = NULL;
@@ -333,8 +384,22 @@ static struct net_pkt *eth_rx(const struct device *dev)
 	LOG_DBG("Receiving Packet: %p", pkt);
 
 release_desc:
-	dma_rx_desc_current->Status |= ETH_DMARxDesc_OWN;
-	dma_rx_desc_current = (struct eth_dma_desc *)(dma_rx_desc_current->Buffer2NextDescAddr);
+#ifdef CONFIG_PTP_CLOCK_WCH
+	/* Set Timestamp */
+	pkt->timestamp.second = dma_rx_desc_current->buffer_2_next_descriptor;
+	pkt->timestamp.nanosecond = subsec_to_nsec(dma_rx_desc_current->buffer_1_address);
+	if (pkt->timestamp.second != UINT64_MAX) {
+		net_pkt_set_rx_timestamping(pkt, true);
+	}
+
+	/* Restore overwritten registers */
+	dma_rx_desc_current->buffer_1_address = dma_rx_desc_current->buffer_1_backup;
+	dma_rx_desc_current->buffer_2_next_descriptor = dma_rx_desc_current->buffer_2_backup;
+#endif /* CONFIG_PTP_CLOCK_WCH */
+
+	dma_rx_desc_current->status |= ETH_DMARxDesc_OWN;
+	dma_rx_desc_current =
+		(struct eth_dma_desc *)(dma_rx_desc_current->buffer_2_next_descriptor);
 
 	/* Restart RX DMA if halted */
 	if (eth->DMASR & ETH_DMASR_RBUS) {
@@ -513,6 +578,7 @@ static int eth_mac_init(const struct device *dev)
 	eth->MACHTLR = 0x0;
 	eth->MACFCR = 0x0;
 	eth->MACVLANTR = 0x0;
+	eth->MACIMR = 0x0;
 
 	eth->DMAOMR = ETH_DMAOMR_TSF | ETH_DMAOMR_FEF | ETH_DMAOMR_FUGF;
 
@@ -594,6 +660,9 @@ static enum ethernet_hw_caps eth_wch_get_capabilities(const struct device *dev)
 #if defined(CONFIG_NET_LLDP)
 	       | ETHERNET_LLDP
 #endif
+#if defined(CONFIG_PTP_CLOCK_WCH)
+	       | ETHERNET_PTP
+#endif
 		;
 }
 
@@ -645,6 +714,15 @@ static struct net_stats_eth *eth_wch_get_stats(const struct device *dev)
 	return &data->stats;
 }
 #endif /* CONFIG_NET_STATISTICS_ETHERNET */
+
+#ifdef CONFIG_PTP_CLOCK_WCH
+static const struct device *eth_wch_get_ptp_clock(const struct device *dev)
+{
+	const struct eth_wch_config *config = dev->config;
+
+	return config->ptp_clock;
+}
+#endif /* CONFIG_PTP_CLOCK_WCH */
 
 static int eth_wch_init(const struct device *dev)
 {
@@ -740,7 +818,16 @@ static const struct ethernet_api eth_api = {
 #if defined(CONFIG_NET_STATISTICS_ETHERNET)
 	.get_stats = eth_wch_get_stats,
 #endif /* CONFIG_NET_STATISTICS_ETHERNET */
+#if defined(CONFIG_PTP_CLOCK_WCH)
+	.get_ptp_clock = eth_wch_get_ptp_clock,
+#endif /* CONFIG_PTP_CLOCK_WCH */
 };
+
+#ifdef CONFIG_PTP_CLOCK_WCH
+#define ETH_WCH_PTP_DEV(n) .ptp_clock = DEVICE_DT_GET(DT_INST_PHANDLE(n, ptp_clock)),
+#else
+#define ETH_WCH_PTP_DEV(n)
+#endif /* CONFIG_PTP_CLOCK_WCH */
 
 #define ETH_WCH_IRQ_HANDLER_DECL(idx)                                                              \
 	static void eth_wch_irq_config_func_##idx(const struct device *dev);
@@ -776,7 +863,7 @@ static const struct ethernet_api eth_api = {
 		.internal_phy_pllmul = DT_INST_PROP(inst, internal_phy_pllmul),                    \
 		.internal_phy_prediv = DT_INST_PROP(inst, internal_phy_prediv),                    \
 		.pin_cfg = PINCTRL_DT_INST_DEV_CONFIG_GET(inst),                                   \
-		ETH_WCH_IRQ_HANDLER_FUNC(inst)};                                                   \
+		ETH_WCH_PTP_DEV(inst) ETH_WCH_IRQ_HANDLER_FUNC(inst)};                             \
 	static struct eth_wch_data eth_wch_data_##inst;                                            \
 	ETH_NET_DEVICE_DT_INST_DEFINE(inst, eth_wch_init, NULL, &eth_wch_data_##inst,              \
 				      &eth_wch_config_##inst, CONFIG_ETH_INIT_PRIORITY, &eth_api,  \
