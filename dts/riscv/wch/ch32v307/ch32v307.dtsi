@@ -299,6 +299,7 @@
 				interrupts = <77>, <78>;
 				internal-phy-pllmul = "15";
 				internal-phy-prediv = "2";
+				ptp-clock = <&ptp_clock>;
 				status = "disabled";
 			};
 
@@ -306,6 +307,11 @@
 				compatible = "wch,mdio";
 				#address-cells = <1>;
 				#size-cells = <0>;
+				status = "disabled";
+			};
+
+			ptp_clock: ptp_clock {
+				compatible = "wch,ptp-clock";
 				status = "disabled";
 			};
 		};
