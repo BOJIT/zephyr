@@ -298,6 +298,7 @@
 					 <&rcc CH32V20X_V30X_CLOCK_ETHMACRX>;
 				internal-phy-pllmul = <15>;
 				internal-phy-prediv = <2>;
+				ptp-clock = <&ptp_clock>;
 				status = "disabled";
 			};
 
@@ -305,6 +306,11 @@
 				compatible = "wch,ch32-mdio";
 				#address-cells = <1>;
 				#size-cells = <0>;
+				status = "disabled";
+			};
+
+			ptp_clock: ptp_clock {
+				compatible = "wch,ptp-clock";
 				status = "disabled";
 			};
 		};

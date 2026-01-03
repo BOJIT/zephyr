@@ -221,6 +221,10 @@ struct eth_wch_config {
 
 	const struct pinctrl_dev_config *pin_cfg;
 	void (*irq_config_func)(const struct device *dev);
+
+#ifdef CONFIG_PTP_CLOCK_WCH
+	const struct device *ptp_clock;
+#endif /* CONFIG_PTP_CLOCK_WCH */
 };
 
 struct eth_wch_data {
@@ -721,6 +725,9 @@ static enum ethernet_hw_caps eth_wch_get_capabilities(const struct device *dev)
 #if defined(CONFIG_NET_LLDP)
 	       | ETHERNET_LLDP
 #endif
+#if defined(CONFIG_PTP_CLOCK_WCH)
+	       | ETHERNET_PTP
+#endif
 		;
 }
 
@@ -776,6 +783,15 @@ static struct net_stats_eth *eth_wch_get_stats(const struct device *dev)
 	return &data->stats;
 }
 #endif /* CONFIG_NET_STATISTICS_ETHERNET */
+
+#ifdef CONFIG_PTP_CLOCK_WCH
+static const struct device *eth_wch_get_ptp_clock(const struct device *dev)
+{
+	const struct eth_wch_config *config = dev->config;
+
+	return config->ptp_clock;
+}
+#endif /* CONFIG_PTP_CLOCK_WCH */
 
 static int eth_wch_init(const struct device *dev)
 {
@@ -858,7 +874,16 @@ static const struct ethernet_api eth_api = {
 #if defined(CONFIG_NET_STATISTICS_ETHERNET)
 	.get_stats = eth_wch_get_stats,
 #endif /* CONFIG_NET_STATISTICS_ETHERNET */
+#if defined(CONFIG_PTP_CLOCK_WCH)
+	.get_ptp_clock = eth_wch_get_ptp_clock,
+#endif /* CONFIG_PTP_CLOCK_WCH */
 };
+
+#ifdef CONFIG_PTP_CLOCK_WCH
+#define ETH_WCH_PTP_DEV(n) .ptp_clock = DEVICE_DT_GET(DT_INST_PHANDLE(n, ptp_clock)),
+#else
+#define ETH_WCH_PTP_DEV(n)
+#endif /* CONFIG_PTP_CLOCK_WCH */
 
 #define ETH_WCH_IRQ_HANDLER_DECL(idx)                                                              \
 	static void eth_wch_irq_config_func_##idx(const struct device *dev);
@@ -894,7 +919,7 @@ static const struct ethernet_api eth_api = {
 		.internal_phy_pllmul = DT_INST_PROP(inst, internal_phy_pllmul),                    \
 		.internal_phy_prediv = DT_INST_PROP(inst, internal_phy_prediv),                    \
 		.pin_cfg = PINCTRL_DT_INST_DEV_CONFIG_GET(inst),                                   \
-		ETH_WCH_IRQ_HANDLER_FUNC(inst)};                                                   \
+		ETH_WCH_PTP_DEV(inst) ETH_WCH_IRQ_HANDLER_FUNC(inst)};                             \
 	static struct eth_wch_data eth_wch_data_##inst;                                            \
 	ETH_NET_DEVICE_DT_INST_DEFINE(inst, eth_wch_init, NULL, &eth_wch_data_##inst,              \
 				      &eth_wch_config_##inst, CONFIG_ETH_INIT_PRIORITY, &eth_api,  \
