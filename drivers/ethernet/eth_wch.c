@@ -31,120 +31,12 @@ LOG_MODULE_REGISTER(ethernet_wch, CONFIG_ETHERNET_LOG_LEVEL);
 
 #include "eth.h"
 
-/* Internal 10BASE-T PHY 50R*4 pull-up resistance enable or disable */
-#define ETH_Internal_Pull_Up_Res_Enable  ((uint32_t)0x00100000)
-#define ETH_Internal_Pull_Up_Res_Disable ((uint32_t)0x00000000)
+#define ETH_MACCR_PR BIT(20)
 
-/* MAC watchdog enable or disable */
-#define ETH_Watchdog_Enable  ((uint32_t)0x00000000)
-#define ETH_Watchdog_Disable ((uint32_t)0x00800000)
-
-/* Bit description - MAC jabber enable or disable */
-#define ETH_Jabber_Enable  ((uint32_t)0x00000000)
-#define ETH_Jabber_Disable ((uint32_t)0x00400000)
-
-/* Value of minimum IFG between frames during transmission */
-#define ETH_InterFrameGap_96Bit ((uint32_t)0x00000000)
-#define ETH_InterFrameGap_88Bit ((uint32_t)0x00020000)
-#define ETH_InterFrameGap_80Bit ((uint32_t)0x00040000)
-#define ETH_InterFrameGap_72Bit ((uint32_t)0x00060000)
-#define ETH_InterFrameGap_64Bit ((uint32_t)0x00080000)
-#define ETH_InterFrameGap_56Bit ((uint32_t)0x000A0000)
-#define ETH_InterFrameGap_48Bit ((uint32_t)0x000C0000)
-#define ETH_InterFrameGap_40Bit ((uint32_t)0x000E0000)
-
-/* MAC speed */
-#define ETH_Speed_10M   ((uint32_t)0x00000000)
-#define ETH_Speed_100M  ((uint32_t)0x00004000)
-#define ETH_Speed_1000M ((uint32_t)0x00008000)
-#define ETH_Speed_Mask  ((uint32_t)0x0000C000)
-
-/* MAC Loopback mode enable or disable */
-#define ETH_LoopbackMode_Enable  ((uint32_t)0x00001000)
-#define ETH_LoopbackMode_Disable ((uint32_t)0x00000000)
-
-/* MAC full duplex or half duplex */
-#define ETH_Mode_FullDuplex ((uint32_t)0x00000800)
-#define ETH_Mode_HalfDuplex ((uint32_t)0x00000000)
-
-/* MAC offload IP (IPCO) checksum enable or disable */
-#define ETH_ChecksumOffload_Enable  ((uint32_t)0x00000400)
-#define ETH_ChecksumOffload_Disable ((uint32_t)0x00000000)
-
-/* MAC automatic pad CRC strip enable or disable */
-#define ETH_AutomaticPadCRCStrip_Enable  ((uint32_t)0x00000080)
-#define ETH_AutomaticPadCRCStrip_Disable ((uint32_t)0x00000000)
-
-/* Bit description: MAC receive all frame enable or disable */
-#define ETH_ReceiveAll_Enable  ((uint32_t)0x80000000)
-#define ETH_ReceiveAll_Disable ((uint32_t)0x00000000)
-
-/* MAC backoff limitation */
-#define ETH_SourceAddrFilter_Normal_Enable  ((uint32_t)0x00000200)
-#define ETH_SourceAddrFilter_Inverse_Enable ((uint32_t)0x00000300)
-#define ETH_SourceAddrFilter_Disable        ((uint32_t)0x00000000)
-
-/* MAC Pass control frames */
-#define ETH_PassControlFrames_BlockAll                ((uint32_t)0x00000040)
-#define ETH_PassControlFrames_ForwardAll              ((uint32_t)0x00000080)
-#define ETH_PassControlFrames_ForwardPassedAddrFilter ((uint32_t)0x000000C0)
-
-/* MAC broadcast frames reception */
-#define ETH_BroadcastFramesReception_Enable  ((uint32_t)0x00000000)
-#define ETH_BroadcastFramesReception_Disable ((uint32_t)0x00000020)
-
-/* MAC destination address filter */
-#define ETH_DestinationAddrFilter_Normal  ((uint32_t)0x00000000)
-#define ETH_DestinationAddrFilter_Inverse ((uint32_t)0x00000008)
-
-/* MAC Promiscuous mode enable or disable */
-#define ETH_PromiscuousMode_Enable  ((uint32_t)0x00000001)
-#define ETH_PromiscuousMode_Disable ((uint32_t)0x00000000)
-
-/* MAC multicast frames filter */
-#define ETH_MulticastFramesFilter_PerfectHashTable ((uint32_t)0x00000404)
-#define ETH_MulticastFramesFilter_HashTable        ((uint32_t)0x00000004)
-#define ETH_MulticastFramesFilter_Perfect          ((uint32_t)0x00000000)
-#define ETH_MulticastFramesFilter_None             ((uint32_t)0x00000010)
-
-/* MAC unicast frames filter */
-#define ETH_UnicastFramesFilter_PerfectHashTable ((uint32_t)0x00000402)
-#define ETH_UnicastFramesFilter_HashTable        ((uint32_t)0x00000002)
-#define ETH_UnicastFramesFilter_Perfect          ((uint32_t)0x00000000)
-
-/* MAC unicast pause frame detect enable or disable*/
-#define ETH_UnicastPauseFrameDetect_Enable  ((uint32_t)0x00000008)
-#define ETH_UnicastPauseFrameDetect_Disable ((uint32_t)0x00000000)
-
-/* MAC receive flow control frame enable or disable */
-#define ETH_ReceiveFlowControl_Enable  ((uint32_t)0x00000004)
-#define ETH_ReceiveFlowControl_Disable ((uint32_t)0x00000000)
-
-/* MAC transmit flow control enable or disable */
-#define ETH_TransmitFlowControl_Enable  ((uint32_t)0x00000002)
-#define ETH_TransmitFlowControl_Disable ((uint32_t)0x00000000)
-
-/* MAC VLAN tag comparison */
-#define ETH_VLANTagComparison_12Bit ((uint32_t)0x00010000)
-#define ETH_VLANTagComparison_16Bit ((uint32_t)0x00000000)
-
-/* MAC address filter select */
-#define ETH_MAC_AddressFilter_SA ((uint32_t)0x00000000)
-#define ETH_MAC_AddressFilter_DA ((uint32_t)0x00000008)
-
-/* MAC flag */
-#define ETH_MAC_FLAG_TST  ((uint32_t)0x00000200)
-#define ETH_MAC_FLAG_MMCT ((uint32_t)0x00000040)
-#define ETH_MAC_FLAG_MMCR ((uint32_t)0x00000020)
-#define ETH_MAC_FLAG_MMC  ((uint32_t)0x00000010)
-#define ETH_MAC_FLAG_PMT  ((uint32_t)0x00000008)
-
-/* MAC interrupt */
-#define ETH_MAC_IT_TST  ((uint32_t)0x00000200)
-#define ETH_MAC_IT_MMCT ((uint32_t)0x00000040)
-#define ETH_MAC_IT_MMCR ((uint32_t)0x00000020)
-#define ETH_MAC_IT_MMC  ((uint32_t)0x00000010)
-#define ETH_MAC_IT_PMT  ((uint32_t)0x00000008)
+#define ETH_MACCR_FES_10M   ((uint32_t)0x00000000)
+#define ETH_MACCR_FES_100M  ((uint32_t)0x00004000)
+#define ETH_MACCR_FES_1000M ((uint32_t)0x00008000)
+#define ETH_MACCR_FES_MASK  ((uint32_t)0x0000C000)
 
 #define ETH_DMA_TX_TIMEOUT_MS (20U) /* transmit timeout in milliseconds */
 
@@ -510,13 +402,15 @@ static void set_mac_config(const struct device *dev, struct phy_link_state *stat
 	/* Configure Speed and Duplex Mode */
 	uint32_t tmpreg = eth->MACCR;
 
-	tmpreg &= ~ETH_Mode_FullDuplex;
-	tmpreg |= PHY_LINK_IS_FULL_DUPLEX(state->speed) ? ETH_Mode_FullDuplex : ETH_Mode_HalfDuplex;
+	tmpreg &= ~ETH_MACCR_DM;
+	if (PHY_LINK_IS_FULL_DUPLEX(state->speed)) {
+		tmpreg |= ETH_MACCR_DM;
+	}
 
-	tmpreg &= ~ETH_Speed_Mask;
-	tmpreg |= PHY_LINK_IS_SPEED_1000M(state->speed)  ? ETH_Speed_1000M
-		  : PHY_LINK_IS_SPEED_100M(state->speed) ? ETH_Speed_100M
-							 : ETH_Speed_10M;
+	tmpreg &= ~ETH_MACCR_FES_MASK;
+	tmpreg |= PHY_LINK_IS_SPEED_1000M(state->speed)  ? ETH_MACCR_FES_1000M
+		  : PHY_LINK_IS_SPEED_100M(state->speed) ? ETH_MACCR_FES_100M
+							 : ETH_MACCR_FES_10M;
 }
 
 static void phy_link_state_changed(const struct device *phy_dev, struct phy_link_state *state,
@@ -553,42 +447,31 @@ static int eth_mac_init(const struct device *dev)
 		;
 	}
 
+	// TODO move to another function
 	/* Set MAC Address in Hardware */
 	eth->MACA0HR = (data->mac_addr[5] << 8) | data->mac_addr[4];
 	eth->MACA0LR = (data->mac_addr[3] << 24) | (data->mac_addr[2] << 16) |
 		       (data->mac_addr[1] << 8) | data->mac_addr[0];
 
 	/* Configure ethernet MAC */
-	eth->MACCR = (ETH_Watchdog_Enable | ETH_Jabber_Enable | ETH_InterFrameGap_96Bit |
-		      ETH_AutomaticPadCRCStrip_Disable | ETH_LoopbackMode_Disable
+	eth->MACCR = 0x0;
 #if defined(CONFIG_ETH_WCH_HW_CHECKSUM)
-		      | ETH_ChecksumOffload_Enable
+	eth->MACCR |= ETH_MACCR_IPCO;
 #endif /* defined(CONFIG_ETH_WCH_HW_CHECKSUM) */
-	);
 
-	if (config->use_internal_phy) {
-		eth->MACCR |= ETH_Internal_Pull_Up_Res_Enable;
-	}
-
-	eth->MACFFR = (ETH_ReceiveAll_Enable | ETH_PromiscuousMode_Disable |
-		       ETH_BroadcastFramesReception_Enable | ETH_MulticastFramesFilter_Perfect |
-		       ETH_UnicastFramesFilter_Perfect | ETH_PassControlFrames_BlockAll |
-		       ETH_DestinationAddrFilter_Normal | ETH_SourceAddrFilter_Disable
+	// TODO get rid of receive all
+	eth->MACFFR = (ETH_MACFFR_RA | ETH_MACFFR_PCF_BlockAll
 #if defined(CONFIG_NET_PROMISCUOUS_MODE)
-		       | ETH_PromiscuousMode_Enable
+		       | ETH_MACFFR_PM
 #endif /* defined(CONFIG_NET_PROMISCUOUS_MODE) */
 	);
 
 	eth->MACHTHR = 0x0;
 	eth->MACHTLR = 0x0;
+	eth->MACFCR = 0x0;
+	eth->MACVLANTR = 0x0;
 
-	eth->MACFCR = ETH_UnicastPauseFrameDetect_Disable | ETH_ReceiveFlowControl_Disable |
-		      ETH_TransmitFlowControl_Disable;
-
-	eth->MACVLANTR = ETH_VLANTagComparison_16Bit;
-
-	eth->DMAOMR = ETH_DropTCPIPChecksumErrorFrame_Enable | ETH_TransmitStoreForward_Enable |
-		      ETH_ForwardErrorFrames_Enable | ETH_ForwardUndersizedGoodFrames_Enable;
+	eth->DMAOMR = ETH_DMAOMR_TSF | ETH_DMAOMR_FEF | ETH_DMAOMR_FUGF;
 
 	/* Disable unwanted MMC interrupts */
 	eth->MMCTIMR = ETH_MMCTIMR_TGFM;
@@ -598,6 +481,7 @@ static int eth_mac_init(const struct device *dev)
 		(ETH_DMA_IT_NIS | ETH_DMA_IT_R | ETH_DMA_IT_T | ETH_DMA_IT_AIS | ETH_DMA_IT_RBU);
 
 	if (config->use_internal_phy) {
+		eth->MACCR |= ETH_MACCR_PR;
 		eth->DMAIER |= ETH_DMA_IT_PHYLINK;
 	}
 
