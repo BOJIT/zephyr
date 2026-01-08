@@ -119,6 +119,13 @@ static void setup_mac_filter(ETH_TypeDef *eth)
 	/* TODO implement */
 }
 
+static void set_mac_addr(ETH_TypeDef *eth, uint8_t mac[NET_ETH_ADDR_LEN], struct net_if *iface)
+{
+	eth->MACA0HR = (mac[5] << 8) | mac[4];
+	eth->MACA0LR = (mac[3] << 24) | (mac[2] << 16) | (mac[1] << 8) | mac[0];
+	net_if_set_link_addr(iface, mac, NET_ETH_ADDR_LEN, NET_LINK_ETHERNET);
+}
+
 static void init_tx_dma_desc(ETH_TypeDef *eth)
 {
 	for (int i = 0; i < ETH_TXBUF_NB; i++) {
@@ -438,7 +445,6 @@ static void phy_link_state_changed(const struct device *phy_dev, struct phy_link
 
 static int eth_mac_init(const struct device *dev)
 {
-	struct eth_wch_data *data = dev->data;
 	const struct eth_wch_config *config = dev->config;
 	ETH_TypeDef *eth = config->regs;
 
@@ -446,12 +452,6 @@ static int eth_mac_init(const struct device *dev)
 	while (eth->DMABMR & ETH_DMABMR_SR) {
 		;
 	}
-
-	// TODO move to another function
-	/* Set MAC Address in Hardware */
-	eth->MACA0HR = (data->mac_addr[5] << 8) | data->mac_addr[4];
-	eth->MACA0LR = (data->mac_addr[3] << 24) | (data->mac_addr[2] << 16) |
-		       (data->mac_addr[1] << 8) | data->mac_addr[0];
 
 	/* Configure ethernet MAC */
 	eth->MACCR = 0x0;
@@ -505,10 +505,18 @@ static void eth_wch_iface_init(struct net_if *iface)
 		is_first_init = true;
 	}
 
-	/* Register Ethernet MAC Address with the upper layer */
-	net_if_set_link_addr(iface, data->mac_addr, sizeof(data->mac_addr), NET_LINK_ETHERNET);
+	if (is_first_init) {
+		/* Start interruption-poll thread */
+		k_thread_create(&data->rx_thread, data->rx_thread_stack,
+				K_KERNEL_STACK_SIZEOF(data->rx_thread_stack), rx_thread,
+				(void *)dev, NULL, NULL,
+				K_PRIO_COOP(CONFIG_ETH_WCH_HAL_RX_THREAD_PRIO), 0, K_NO_WAIT);
+
+		k_thread_name_set(&data->rx_thread, dev->name);
+	}
 
 	/* Initialise interface with relevant hardware settings */
+	set_mac_addr(config->regs, data->mac_addr, iface);
 	ethernet_init(iface);
 	eth_mac_init(dev);
 	setup_mac_filter(config->regs);
@@ -520,20 +528,6 @@ static void eth_wch_iface_init(struct net_if *iface)
 		phy_link_callback_set(config->phy_dev, phy_link_state_changed, (void *)dev);
 	} else {
 		LOG_ERR("PHY device not ready");
-	}
-
-	if (is_first_init) {
-		/* Now that the iface is setup, we are safe to enable IRQs. */
-		__ASSERT_NO_MSG(config->irq_config_func != NULL);
-		config->irq_config_func(dev);
-
-		/* Start interruption-poll thread */
-		k_thread_create(&data->rx_thread, data->rx_thread_stack,
-				K_KERNEL_STACK_SIZEOF(data->rx_thread_stack), rx_thread,
-				(void *)dev, NULL, NULL,
-				K_PRIO_COOP(CONFIG_ETH_WCH_HAL_RX_THREAD_PRIO), 0, K_NO_WAIT);
-
-		k_thread_name_set(&data->rx_thread, dev->name);
 	}
 }
 
@@ -564,11 +558,7 @@ static int eth_wch_set_config(const struct device *dev, enum ethernet_config_typ
 	switch (type) {
 	case ETHERNET_CONFIG_TYPE_MAC_ADDRESS:
 		memcpy(data->mac_addr, config->mac_address.addr, 6);
-		eth->MACA0HR = (data->mac_addr[5] << 8) | data->mac_addr[4];
-		eth->MACA0LR = (data->mac_addr[3] << 24) | (data->mac_addr[2] << 16) |
-			       (data->mac_addr[1] << 8) | data->mac_addr[0];
-		net_if_set_link_addr(data->iface, data->mac_addr, sizeof(data->mac_addr),
-				     NET_LINK_ETHERNET);
+		set_mac_addr(eth, data->mac_addr, data->iface);
 		return 0;
 #if defined(CONFIG_NET_PROMISCUOUS_MODE)
 	case ETHERNET_CONFIG_TYPE_PROMISC_MODE:
@@ -672,6 +662,7 @@ static int eth_wch_init(const struct device *dev)
 	}
 
 	/* Generate MAC address (once at boot) */
+	// TODO change
 	generate_mac(data->mac_addr, config->use_random_mac);
 	LOG_DBG("MAC %02x:%02x:%02x:%02x:%02x:%02x", data->mac_addr[0], data->mac_addr[1],
 		data->mac_addr[2], data->mac_addr[3], data->mac_addr[4], data->mac_addr[5]);
@@ -680,6 +671,10 @@ static int eth_wch_init(const struct device *dev)
 	k_mutex_init(&data->tx_mutex);
 	k_sem_init(&data->rx_int_sem, 0, K_SEM_MAX_LIMIT);
 	k_sem_init(&data->tx_int_sem, 0, K_SEM_MAX_LIMIT);
+
+	/* IRQ config */
+	__ASSERT_NO_MSG(config->irq_config_func != NULL);
+	config->irq_config_func(dev);
 
 	return 0;
 }
