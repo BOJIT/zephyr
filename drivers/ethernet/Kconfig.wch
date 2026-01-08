@@ -5,7 +5,6 @@ menuconfig ETH_WCH
 	bool "WCH Ethernet driver"
 	default y
 	depends on DT_HAS_WCH_CH32_ETHERNET_ENABLED
-	select PM
 	help
 	  Enable WCH Ethernet driver. It is available for
 	  all the CH32V307 and CH32V317 MCUs
@@ -31,14 +30,12 @@ config ETH_WCH_HAL_RX_THREAD_PRIO
 
 config ETH_WCH_HW_CHECKSUM
 	bool "Use TX and RX hardware checksum"
-	default n
 	help
 	  Enable receive and transmit checksum offload to enhance throughput
 	  performances.
 
 config ETH_WCH_MULTICAST_FILTER
 	bool "Multicast hash filter support"
-	default n
 	help
 	  Enable support for multicast hash filtering in the MAC.
 	  Once enabled the ethernet MAC performs imperfect filtering

@@ -35,10 +35,6 @@ LOG_MODULE_REGISTER(ethernet_wch, CONFIG_ETHERNET_LOG_LEVEL);
 #define ETH_Internal_Pull_Up_Res_Enable  ((uint32_t)0x00100000)
 #define ETH_Internal_Pull_Up_Res_Disable ((uint32_t)0x00000000)
 
-/* MAC autoNegotiation enable or disable */
-#define ETH_AutoNegotiation_Enable  ((uint32_t)0x00000001)
-#define ETH_AutoNegotiation_Disable ((uint32_t)0x00000000)
-
 /* MAC watchdog enable or disable */
 #define ETH_Watchdog_Enable  ((uint32_t)0x00000000)
 #define ETH_Watchdog_Disable ((uint32_t)0x00800000)
@@ -57,19 +53,11 @@ LOG_MODULE_REGISTER(ethernet_wch, CONFIG_ETHERNET_LOG_LEVEL);
 #define ETH_InterFrameGap_48Bit ((uint32_t)0x000C0000)
 #define ETH_InterFrameGap_40Bit ((uint32_t)0x000E0000)
 
-/* MAC carrier sense enable or disable */
-#define ETH_CarrierSense_Enable  ((uint32_t)0x00000000)
-#define ETH_CarrierSense_Disable ((uint32_t)0x00010000)
-
 /* MAC speed */
 #define ETH_Speed_10M   ((uint32_t)0x00000000)
 #define ETH_Speed_100M  ((uint32_t)0x00004000)
 #define ETH_Speed_1000M ((uint32_t)0x00008000)
 #define ETH_Speed_Mask  ((uint32_t)0x0000C000)
-
-/* MAC receive own enable or disable */
-#define ETH_ReceiveOwn_Enable  ((uint32_t)0x00000000)
-#define ETH_ReceiveOwn_Disable ((uint32_t)0x00002000)
 
 /* MAC Loopback mode enable or disable */
 #define ETH_LoopbackMode_Enable  ((uint32_t)0x00001000)
@@ -83,23 +71,9 @@ LOG_MODULE_REGISTER(ethernet_wch, CONFIG_ETHERNET_LOG_LEVEL);
 #define ETH_ChecksumOffload_Enable  ((uint32_t)0x00000400)
 #define ETH_ChecksumOffload_Disable ((uint32_t)0x00000000)
 
-/* MAC transmission retry enable or disable */
-#define ETH_RetryTransmission_Enable  ((uint32_t)0x00000000)
-#define ETH_RetryTransmission_Disable ((uint32_t)0x00000200)
-
 /* MAC automatic pad CRC strip enable or disable */
 #define ETH_AutomaticPadCRCStrip_Enable  ((uint32_t)0x00000080)
 #define ETH_AutomaticPadCRCStrip_Disable ((uint32_t)0x00000000)
-
-/* MAC backoff limitation */
-#define ETH_BackOffLimit_10 ((uint32_t)0x00000000)
-#define ETH_BackOffLimit_8  ((uint32_t)0x00000020)
-#define ETH_BackOffLimit_4  ((uint32_t)0x00000040)
-#define ETH_BackOffLimit_1  ((uint32_t)0x00000060)
-
-/* MAC deferral check enable or disable */
-#define ETH_DeferralCheck_Enable  ((uint32_t)0x00000010)
-#define ETH_DeferralCheck_Disable ((uint32_t)0x00000000)
 
 /* Bit description: MAC receive all frame enable or disable */
 #define ETH_ReceiveAll_Enable  ((uint32_t)0x80000000)
@@ -138,16 +112,6 @@ LOG_MODULE_REGISTER(ethernet_wch, CONFIG_ETHERNET_LOG_LEVEL);
 #define ETH_UnicastFramesFilter_HashTable        ((uint32_t)0x00000002)
 #define ETH_UnicastFramesFilter_Perfect          ((uint32_t)0x00000000)
 
-/* Bit description  : MAC zero quanta pause */
-#define ETH_ZeroQuantaPause_Enable  ((uint32_t)0x00000000)
-#define ETH_ZeroQuantaPause_Disable ((uint32_t)0x00000080)
-
-/* Field description  : MAC pause low threshold */
-#define ETH_PauseLowThreshold_Minus4   ((uint32_t)0x00000000)
-#define ETH_PauseLowThreshold_Minus28  ((uint32_t)0x00000010)
-#define ETH_PauseLowThreshold_Minus144 ((uint32_t)0x00000020)
-#define ETH_PauseLowThreshold_Minus256 ((uint32_t)0x00000030)
-
 /* MAC unicast pause frame detect enable or disable*/
 #define ETH_UnicastPauseFrameDetect_Enable  ((uint32_t)0x00000008)
 #define ETH_UnicastPauseFrameDetect_Disable ((uint32_t)0x00000000)
@@ -164,6 +128,10 @@ LOG_MODULE_REGISTER(ethernet_wch, CONFIG_ETHERNET_LOG_LEVEL);
 #define ETH_VLANTagComparison_12Bit ((uint32_t)0x00010000)
 #define ETH_VLANTagComparison_16Bit ((uint32_t)0x00000000)
 
+/* MAC address filter select */
+#define ETH_MAC_AddressFilter_SA ((uint32_t)0x00000000)
+#define ETH_MAC_AddressFilter_DA ((uint32_t)0x00000008)
+
 /* MAC flag */
 #define ETH_MAC_FLAG_TST  ((uint32_t)0x00000200)
 #define ETH_MAC_FLAG_MMCT ((uint32_t)0x00000040)
@@ -177,24 +145,6 @@ LOG_MODULE_REGISTER(ethernet_wch, CONFIG_ETHERNET_LOG_LEVEL);
 #define ETH_MAC_IT_MMCR ((uint32_t)0x00000020)
 #define ETH_MAC_IT_MMC  ((uint32_t)0x00000010)
 #define ETH_MAC_IT_PMT  ((uint32_t)0x00000008)
-
-/* MAC address */
-#define ETH_MAC_Address0 ((uint32_t)0x00000000)
-#define ETH_MAC_Address1 ((uint32_t)0x00000008)
-#define ETH_MAC_Address2 ((uint32_t)0x00000010)
-#define ETH_MAC_Address3 ((uint32_t)0x00000018)
-
-/* MAC address filter select */
-#define ETH_MAC_AddressFilter_SA ((uint32_t)0x00000000)
-#define ETH_MAC_AddressFilter_DA ((uint32_t)0x00000008)
-
-/* MAC address mask */
-#define ETH_MAC_AddressMask_Byte6 ((uint32_t)0x20000000)
-#define ETH_MAC_AddressMask_Byte5 ((uint32_t)0x10000000)
-#define ETH_MAC_AddressMask_Byte4 ((uint32_t)0x08000000)
-#define ETH_MAC_AddressMask_Byte3 ((uint32_t)0x04000000)
-#define ETH_MAC_AddressMask_Byte2 ((uint32_t)0x02000000)
-#define ETH_MAC_AddressMask_Byte1 ((uint32_t)0x01000000)
 
 #define ETH_DMA_TX_TIMEOUT_MS (20U) /* transmit timeout in milliseconds */
 
@@ -335,7 +285,7 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 	size_t bytes_remaining = total_len;
 
 	do {
-		if (dma_tx_desc_current->Status & ETH_DMATxDesc_OWN) {
+		if ((dma_tx_desc_current->Status & ETH_DMATxDesc_OWN) != 0U) {
 			eth_stats_update_errors_tx(data->iface);
 			LOG_ERR("No Descriptors Available");
 			res = -EBUSY;
@@ -345,7 +295,8 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 		/* Copy Packet to TX Buf */
 		size_t chunk_size =
 			bytes_remaining > ETH_TXBUF_SIZE ? ETH_TXBUF_SIZE : bytes_remaining;
-		if (net_pkt_read(pkt, (void *)(dma_tx_desc_current->Buffer1Addr), chunk_size)) {
+		if (net_pkt_read(pkt, (void *)(dma_tx_desc_current->Buffer1Addr), chunk_size) !=
+		    0U) {
 			eth_stats_update_errors_tx(data->iface);
 			LOG_ERR("Could not read descriptor buffer!");
 			res = -ENOBUFS;
@@ -367,7 +318,7 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 		dma_tx_desc_current->Status |= ETH_DMATxDesc_OWN;
 
 		/* Restart TX DMA if halted */
-		if (eth->DMASR & ETH_DMASR_TBUS) {
+		if ((eth->DMASR & ETH_DMASR_TBUS) != 0U) {
 			eth->DMASR = ETH_DMASR_TBUS;
 			eth->DMATPDR = 0;
 		}
@@ -399,11 +350,11 @@ static struct net_pkt *eth_rx(const struct device *dev)
 	ETH_TypeDef *eth = config->regs;
 	struct net_pkt *pkt = NULL;
 
-	if (dma_rx_desc_current->Status & ETH_DMARxDesc_OWN) {
+	if ((dma_rx_desc_current->Status & ETH_DMARxDesc_OWN) != 0U) {
 		return NULL; /* Not error, simply packet has not arrived yet */
 	}
 
-	if ((dma_rx_desc_current->Status & ETH_DMARxDesc_ES) ||
+	if (((dma_rx_desc_current->Status & ETH_DMARxDesc_ES) != 0U) ||
 	    ((dma_rx_desc_current->Status & (ETH_DMARxDesc_FS | ETH_DMARxDesc_LS)) !=
 	     (ETH_DMARxDesc_FS | ETH_DMARxDesc_LS))) {
 		goto release_desc; /* Drop descriptor if it is corrupt, or not a full frame */
@@ -414,12 +365,12 @@ static struct net_pkt *eth_rx(const struct device *dev)
 			   sizeof(uint32_t); /* This discards CRC (checked by hardware) */
 
 	pkt = net_pkt_rx_alloc_with_buffer(data->iface, total_len, AF_UNSPEC, 0, K_MSEC(100));
-	if (!pkt) {
+	if (pkt == 0U) {
 		LOG_ERR("Failed to obtain RX buffer");
 		goto release_desc;
 	}
 
-	if (net_pkt_write(pkt, (void *)(dma_rx_desc_current->Buffer1Addr), total_len)) {
+	if (net_pkt_write(pkt, (void *)(dma_rx_desc_current->Buffer1Addr), total_len) != 0) {
 		LOG_ERR("Failed to append RX buffer to context buffer");
 		net_pkt_unref(pkt);
 		pkt = NULL;
@@ -438,7 +389,7 @@ release_desc:
 		eth->DMARPDR = 0;
 	}
 
-	if (!pkt) {
+	if (pkt == 0) {
 		eth_stats_update_errors_rx(data->iface);
 	}
 
@@ -484,8 +435,8 @@ static void eth_isr(const struct device *dev)
 	uint32_t status_flags = eth->DMASR;
 
 	/* Error Flags */
-	if (status_flags & ETH_DMA_IT_AIS) {
-		if (status_flags & ETH_DMA_IT_RBU) {
+	if ((status_flags & ETH_DMA_IT_AIS) != 0U) {
+		if ((status_flags & ETH_DMA_IT_RBU) != 0U) {
 			eth->DMARPDR = 0; /* Re-trigger DMA Rx */
 			eth->DMASR = ETH_DMA_IT_RBU;
 		}
@@ -493,16 +444,16 @@ static void eth_isr(const struct device *dev)
 	}
 
 	/* Standard Flags */
-	if (status_flags & ETH_DMA_IT_NIS) {
-		if (status_flags & ETH_DMA_IT_R) {
+	if ((status_flags & ETH_DMA_IT_NIS) != 0U) {
+		if ((status_flags & ETH_DMA_IT_R) != 0U) {
 			k_sem_give(&data->rx_int_sem);
 			eth->DMASR = ETH_DMA_IT_R;
 		}
-		if (status_flags & ETH_DMA_IT_T) {
+		if ((status_flags & ETH_DMA_IT_T) != 0U) {
 			k_sem_give(&data->tx_int_sem);
 			eth->DMASR = ETH_DMA_IT_T;
 		}
-		if (status_flags & ETH_DMA_IT_PHYLINK) {
+		if ((status_flags & ETH_DMA_IT_PHYLINK) != 0U) {
 			/* for compatibility, simply use polling in the MDIO subsystem */
 			eth->DMASR = ETH_DMA_IT_PHYLINK;
 		}
@@ -681,11 +632,6 @@ static void eth_wch_iface_init(struct net_if *iface)
 	net_if_carrier_off(iface);
 	net_lldp_set_lldpdu(iface);
 
-	/* Initialize semaphores */
-	k_mutex_init(&data->tx_mutex);
-	k_sem_init(&data->rx_int_sem, 0, K_SEM_MAX_LIMIT);
-	k_sem_init(&data->tx_int_sem, 0, K_SEM_MAX_LIMIT);
-
 	if (device_is_ready(config->phy_dev)) {
 		phy_link_callback_set(config->phy_dev, phy_link_state_changed, (void *)dev);
 	} else {
@@ -783,7 +729,7 @@ static int eth_wch_init(const struct device *dev)
 	const struct eth_wch_config *config = dev->config;
 	clock_control_subsys_t clock_sys;
 
-	int ret = 0;
+	int ret;
 
 	/* enable clocks */
 	clock_sys = (clock_control_subsys_t *)(uintptr_t)config->clk_id;
@@ -793,7 +739,7 @@ static int eth_wch_init(const struct device *dev)
 	clock_sys = (clock_control_subsys_t *)(uintptr_t)config->clk_rx_id;
 	ret |= clock_control_on(config->clk_rx_dev, clock_sys);
 
-	if (ret) {
+	if (ret < 0) {
 		LOG_ERR("Failed to enable ethernet clocks");
 		return -EIO;
 	}
@@ -843,8 +789,13 @@ static int eth_wch_init(const struct device *dev)
 
 	/* Generate MAC address (once at boot) */
 	generate_mac(data->mac_addr, config->use_random_mac);
-	LOG_INF("MAC %02x:%02x:%02x:%02x:%02x:%02x", data->mac_addr[0], data->mac_addr[1],
+	LOG_DBG("MAC %02x:%02x:%02x:%02x:%02x:%02x", data->mac_addr[0], data->mac_addr[1],
 		data->mac_addr[2], data->mac_addr[3], data->mac_addr[4], data->mac_addr[5]);
+
+	/* Initialize semaphores */
+	k_mutex_init(&data->tx_mutex);
+	k_sem_init(&data->rx_int_sem, 0, K_SEM_MAX_LIMIT);
+	k_sem_init(&data->tx_int_sem, 0, K_SEM_MAX_LIMIT);
 
 	return 0;
 }
