@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#define DT_DRV_COMPAT wch_ch32_mdio
+#define DT_DRV_COMPAT wch_mdio
 
 #define LOG_LEVEL CONFIG_MDIO_LOG_LEVEL
 #include <zephyr/logging/log.h>
@@ -147,8 +147,8 @@ static DEVICE_API(mdio, mdio_wch_api) = {
 	static struct mdio_wch_data mdio_wch_data_##inst;                                          \
 	static const struct mdio_wch_config mdio_wch_config_##inst = {                             \
 		.regs = (ETH_TypeDef *)DT_REG_ADDR(DT_INST_PARENT(inst)),                          \
-		.clk_dev = DEVICE_DT_GET(DT_CLOCKS_CTLR(DT_INST_PARENT(inst))),                    \
-		.clk_id = DT_CLOCKS_CELL(DT_INST_PARENT(inst), id),                                \
+		.clk_dev = DEVICE_DT_GET(DT_CLOCKS_CTLR_BY_NAME(DT_INST_PARENT(inst), mac)),       \
+		.clk_id = DT_CLOCKS_CELL_BY_NAME(DT_INST_PARENT(inst), mac, id),                   \
 		.pin_cfg = PINCTRL_DT_INST_DEV_CONFIG_GET(inst),                                   \
 	};                                                                                         \
 	DEVICE_DT_INST_DEFINE(inst, &mdio_wch_init, NULL, &mdio_wch_data_##inst,                   \

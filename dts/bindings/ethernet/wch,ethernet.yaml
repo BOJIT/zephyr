@@ -6,12 +6,10 @@ include: [ethernet-controller.yaml, pinctrl-device.yaml]
 description: |
   Ethernet MAC Controller for WCH CH32 series MCUs
 
-compatible: "wch,ch32-ethernet"
+compatible: "wch,ethernet"
 
 properties:
   interrupts:
-    required: true
-  clocks:
     required: true
   pinctrl-0:
     required: true

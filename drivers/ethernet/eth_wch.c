@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#define DT_DRV_COMPAT wch_ch32_ethernet
+#define DT_DRV_COMPAT wch_ethernet
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(ethernet_wch, CONFIG_ETHERNET_LOG_LEVEL);
@@ -712,12 +712,12 @@ static const struct ethernet_api eth_api = {
 	static const struct eth_wch_config eth_wch_config_##inst = {                               \
 		.regs = (ETH_TypeDef *)DT_REG_ADDR(DT_INST_PARENT(inst)),                          \
 		.phy_dev = DEVICE_DT_GET(DT_INST_PHANDLE(inst, phy_handle)),                       \
-		.clk_dev = DEVICE_DT_GET(DT_CLOCKS_CTLR(DT_INST_PARENT(inst))),                    \
-		.clk_id = DT_CLOCKS_CELL(DT_INST_PARENT(inst), id),                                \
-		.clk_tx_dev = DEVICE_DT_GET(DT_INST_CLOCKS_CTLR_BY_IDX(inst, 0)),                  \
-		.clk_tx_id = DT_INST_CLOCKS_CELL_BY_IDX(inst, 0, id),                              \
-		.clk_rx_dev = DEVICE_DT_GET(DT_INST_CLOCKS_CTLR_BY_IDX(inst, 1)),                  \
-		.clk_rx_id = DT_INST_CLOCKS_CELL_BY_IDX(inst, 1, id),                              \
+		.clk_dev = DEVICE_DT_GET(DT_CLOCKS_CTLR_BY_NAME(DT_INST_PARENT(inst), mac)),       \
+		.clk_id = DT_CLOCKS_CELL_BY_NAME(DT_INST_PARENT(inst), mac, id),                   \
+		.clk_tx_dev = DEVICE_DT_GET(DT_CLOCKS_CTLR_BY_NAME(DT_INST_PARENT(inst), tx)),     \
+		.clk_tx_id = DT_CLOCKS_CELL_BY_NAME(DT_INST_PARENT(inst), tx, id),                 \
+		.clk_rx_dev = DEVICE_DT_GET(DT_CLOCKS_CTLR_BY_NAME(DT_INST_PARENT(inst), rx)),     \
+		.clk_rx_id = DT_CLOCKS_CELL_BY_NAME(DT_INST_PARENT(inst), rx, id),                 \
 		.mac_cfg = NET_ETH_MAC_DT_INST_CONFIG_INIT(inst),                                  \
 		.use_internal_phy = DT_INST_ENUM_HAS_VALUE(inst, phy_connection_type, internal),   \
 		.internal_phy_pllmul = DT_INST_PROP(inst, internal_phy_pllmul),                    \

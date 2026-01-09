@@ -3,7 +3,7 @@
 
 description: WCH MDIO Controller
 
-compatible: "wch,ch32-mdio"
+compatible: "wch,mdio"
 
 include: [mdio-controller.yaml, pinctrl-device.yaml]
 

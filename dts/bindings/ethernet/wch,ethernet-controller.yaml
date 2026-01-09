@@ -1,12 +1,10 @@
-# Copyright The Zephyr Project Contributors
+# Copyright 2025 James Bennion-Pedley <james@bojit.org>
 # SPDX-License-Identifier: Apache-2.0
-
-title: WCH Ethernet Controller
 
 description: |
   Contains the Ethernet MAC and the MDIO as child nodes.
 
-compatible: "wch,ch32-ethernet-controller"
+compatible: "wch,ethernet-controller"
 
 include: base.yaml
 

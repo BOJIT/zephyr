@@ -4,6 +4,6 @@
 config MDIO_WCH
 	bool "WCH MDIO controller driver"
 	default y
-	depends on DT_HAS_WCH_CH32_MDIO_ENABLED
+	depends on DT_HAS_WCH_MDIO_ENABLED
 	help
 	  Enable WCH MDIO support.
