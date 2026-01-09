@@ -56,7 +56,7 @@ struct eth_wch_config {
 	const struct device *clk_rx_dev;
 	uint8_t clk_rx_id;
 
-	bool use_random_mac;
+	struct net_eth_mac_config mac_cfg;
 	bool use_internal_phy;
 	uint8_t internal_phy_pllmul;
 	uint8_t internal_phy_prediv;
@@ -67,7 +67,7 @@ struct eth_wch_config {
 
 struct eth_wch_data {
 	struct net_if *iface;
-	uint8_t mac_addr[6];
+	uint8_t mac_addr[NET_ETH_ADDR_LEN];
 	struct k_mutex tx_mutex;
 	struct k_sem rx_int_sem;
 	struct k_sem tx_int_sem;
@@ -96,7 +96,7 @@ static const uint8_t phy_prediv_lut[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 
 #define WCH_PHY_PLL3MUL_VAL(mul) (((mul) << 0x0C) & CFGR2_PLL3MUL)
 #define WCH_PHY_PREDIV2_VAL(mul) (((mul) << 0x04) & CFGR2_PREDIV2)
 
-/* TODO move these to instance macro to make instance-specific */
+/* NOTE for multiple ETH instances move these to instance macro */
 static struct eth_dma_desc __aligned(4) dma_rx_desc_tab[ETH_RXBUF_NB];
 static struct eth_dma_desc __aligned(4) dma_tx_desc_tab[ETH_TXBUF_NB];
 static struct eth_dma_desc *dma_rx_desc_current;
@@ -386,19 +386,15 @@ static int eth_wch_stop(const struct device *dev)
 	return 0;
 }
 
-static void generate_mac(uint8_t *mac_addr, bool random)
+static int get_hw_mac(uint8_t *mac_addr)
 {
-	/* WCH uses this as a MAC address, unclear if it is an IEEE-assigned MAC */
 	uint8_t *mac_base = (uint8_t *)(ROM_CFG_USERADR_ID);
 
 	for (size_t i = 0; i < NET_ETH_ADDR_LEN; i++) {
 		mac_addr[i] = mac_base[NET_ETH_ADDR_LEN - 1 - i];
 	}
 
-	if (random) {
-		/* Generate random address based on WCH OUI (burned into the chip) */
-		gen_random_mac(mac_addr, mac_addr[0], mac_addr[1], mac_addr[2]);
-	}
+	return 0;
 }
 
 static void set_mac_config(const struct device *dev, struct phy_link_state *state)
@@ -661,9 +657,12 @@ static int eth_wch_init(const struct device *dev)
 		return ret;
 	}
 
-	/* Generate MAC address (once at boot) */
-	// TODO change
-	generate_mac(data->mac_addr, config->use_random_mac);
+	/* Configure MAC Address */
+	ret = net_eth_mac_load(&config->mac_cfg, data->mac_addr);
+	if (ret == -ENODATA) {
+		ret = get_hw_mac(data->mac_addr);
+	}
+
 	LOG_DBG("MAC %02x:%02x:%02x:%02x:%02x:%02x", data->mac_addr[0], data->mac_addr[1],
 		data->mac_addr[2], data->mac_addr[3], data->mac_addr[4], data->mac_addr[5]);
 
@@ -719,7 +718,7 @@ static const struct ethernet_api eth_api = {
 		.clk_tx_id = DT_INST_CLOCKS_CELL_BY_IDX(inst, 0, id),                              \
 		.clk_rx_dev = DEVICE_DT_GET(DT_INST_CLOCKS_CTLR_BY_IDX(inst, 1)),                  \
 		.clk_rx_id = DT_INST_CLOCKS_CELL_BY_IDX(inst, 1, id),                              \
-		.use_random_mac = DT_INST_PROP(inst, zephyr_random_mac_address),                   \
+		.mac_cfg = NET_ETH_MAC_DT_INST_CONFIG_INIT(inst),                                  \
 		.use_internal_phy = DT_INST_ENUM_HAS_VALUE(inst, phy_connection_type, internal),   \
 		.internal_phy_pllmul = DT_INST_PROP(inst, internal_phy_pllmul),                    \
 		.internal_phy_prediv = DT_INST_PROP(inst, internal_phy_prediv),                    \
