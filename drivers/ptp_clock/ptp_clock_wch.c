@@ -44,14 +44,14 @@ struct ptp_clock_wch_data {
 	float clock_ratio;
 };
 
-static uint32_t subsec_to_nsec(uint32_t subsec)
+static inline uint32_t subsec_to_nsec(uint32_t subsec)
 {
 	uint64_t val = subsec * 1000000000ll;
 	val >>= 31;
 	return val;
 }
 
-static uint32_t nsec_to_subsec(uint32_t nsec)
+static inline uint32_t nsec_to_subsec(uint32_t nsec)
 {
 	uint64_t val = nsec * 0x80000000ll;
 	val /= 1000000000;
