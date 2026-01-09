@@ -108,15 +108,72 @@ BUILD_ASSERT(ETH_RXBUF_SIZE % 4 == 0, "Buffer size must be a multiple of 4");
 BUILD_ASSERT(ETH_TXBUF_SIZE % 4 == 0, "Buffer size must be a multiple of 4");
 
 #if defined(CONFIG_ETH_WCH_MULTICAST_FILTER)
+static inline uint32_t reverse_bit_u32(uint32_t x)
+{
+	/* Equivalent of ARM `rbit` instruction */
+	size_t bit_count = sizeof(x) * 8;
+	uint32_t x_rev = 0;
+
+	for (size_t i = 0; i < bit_count; i++) {
+		if ((x & (1 << i))) {
+			x_rev |= 1 << ((x_rev - 1) - i);
+		}
+	}
+
+	return x_rev;
+}
+
 static void setup_multicast_filter(const struct device *dev, const struct ethernet_filter *filter)
 {
-	/* TODO implement */
+	struct eth_wch_data *data = dev->data;
+	const struct eth_wch_config *config = dev->config;
+	ETH_TypeDef *eth = config->regs;
+	uint32_t crc;
+	uint32_t hash_table[2];
+	uint32_t hash_index;
+
+	crc = reverse_bit_u32(crc32_ieee(filter->mac_address.addr, sizeof(struct net_eth_addr)));
+	hash_index = (crc >> 26) & 0x3f;
+
+	__ASSERT_NO_MSG(hash_index < ARRAY_SIZE(data->hash_index_cnt));
+
+	hash_table[0] = eth->MACHTLR;
+	hash_table[1] = eth->MACHTHR;
+
+	if (filter->set) {
+		data->hash_index_cnt[hash_index]++;
+		hash_table[hash_index / 32] |= (1 << (hash_index % 32));
+	} else {
+		if (data->hash_index_cnt[hash_index] == 0) {
+			return; /* No hash at index to remove */
+		}
+
+		data->hash_index_cnt[hash_index]--;
+		if (data->hash_index_cnt[hash_index] == 0) {
+			hash_table[hash_index / 32] &= ~(1 << (hash_index % 32));
+		}
+	}
+
+	eth->MACHTLR = hash_table[0];
+	eth->MACHTHR = hash_table[1];
 }
 #endif /* CONFIG_ETH_WCH_MULTICAST_FILTER */
 
 static void setup_mac_filter(ETH_TypeDef *eth)
 {
-	/* TODO implement */
+	eth->MACFFR = (ETH_MACFFR_PCF_BlockAll
+#if defined(CONFIG_ETH_WCH_MULTICAST_FILTER)
+		       | ETH_MACFFR_HM
+#else
+		       | ETH_MACFFR_PAM
+#endif /* CONFIG_ETH_WCH_MULTICAST_FILTER */
+#if defined(CONFIG_NET_PROMISCUOUS_MODE)
+		       | ETH_MACFFR_PM
+#endif /* defined(CONFIG_NET_PROMISCUOUS_MODE) */
+	);
+
+	// TODO: GET RID OF: Receive all bypasses all filters
+	// eth->MACFFR |= ETH_MACFFR_RA;
 }
 
 static void set_mac_addr(ETH_TypeDef *eth, uint8_t mac[NET_ETH_ADDR_LEN], struct net_if *iface)
@@ -454,13 +511,6 @@ static int eth_mac_init(const struct device *dev)
 #if defined(CONFIG_ETH_WCH_HW_CHECKSUM)
 	eth->MACCR |= ETH_MACCR_IPCO;
 #endif /* defined(CONFIG_ETH_WCH_HW_CHECKSUM) */
-
-	// TODO get rid of receive all
-	eth->MACFFR = (ETH_MACFFR_RA | ETH_MACFFR_PCF_BlockAll
-#if defined(CONFIG_NET_PROMISCUOUS_MODE)
-		       | ETH_MACFFR_PM
-#endif /* defined(CONFIG_NET_PROMISCUOUS_MODE) */
-	);
 
 	eth->MACHTHR = 0x0;
 	eth->MACHTLR = 0x0;

@@ -36,6 +36,7 @@ config ETH_WCH_HW_CHECKSUM
 
 config ETH_WCH_MULTICAST_FILTER
 	bool "Multicast hash filter support"
+	imply CRC
 	help
 	  Enable support for multicast hash filtering in the MAC.
 	  Once enabled the ethernet MAC performs imperfect filtering
