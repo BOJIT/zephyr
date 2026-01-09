@@ -18,7 +18,6 @@ LOG_MODULE_REGISTER(ptp_wch, CONFIG_LOG_DEFAULT_LEVEL);
 #include <hal_ch32fun.h>
 
 /**
- * @brief
  * Addend * Increment = 2^63 / SysClk (144 MHz)
  * ptp_tick = Increment * 10^9 / 2^31
  *
@@ -64,6 +63,8 @@ static int ptp_clock_wch_set(const struct device *dev, struct net_ptp_time *tm)
 	struct ptp_clock_wch_data *data = dev->data;
 	const struct ptp_clock_wch_config *config = dev->config;
 
+	k_mutex_lock(&data->ptp_mutex, K_FOREVER);
+
 	/* read old addend register value */
 	uint32_t addend = config->regs->PTPTSAR;
 
@@ -72,22 +73,23 @@ static int ptp_clock_wch_set(const struct device *dev, struct net_ptp_time *tm)
 	while ((config->regs->PTPTSCR |= ETH_PTPTSCR_TSSTI) != 0U)
 		;
 
-	/* Write the offset (positive or negative) */
+	/* Load updated registers with absolute time */
 	uint32_t seconds = (uint32_t)(tm->second);
 	uint32_t subseconds = nsec_to_subsec(tm->nanosecond);
 
-	// TODO make absolute set! This currently just updates an offset!
 	config->regs->PTPTSHUR = seconds;
 	config->regs->PTPTSLUR = ETH_PTP_PositiveTime | subseconds;
 
-	/* Set bit (TSSTU) in the Time stamp control register. */
-	config->regs->PTPTSCR |= ETH_PTPTSCR_TSSTU;
-	while ((config->regs->PTPTSCR |= ETH_PTPTSCR_TSSTU) != 0U)
+	/* Set TSSTI initialises the time */
+	config->regs->PTPTSCR |= ETH_PTPTSCR_TSSTI;
+	while ((config->regs->PTPTSCR |= ETH_PTPTSCR_TSSTI) != 0U)
 		;
 
 	/* Write back old addend register value. */
 	config->regs->PTPTSAR = addend;
 	config->regs->PTPTSCR |= ETH_PTPTSCR_TSARU;
+
+	k_mutex_unlock(&data->ptp_mutex);
 
 	return 0;
 }
@@ -107,9 +109,9 @@ static int ptp_clock_wch_adjust(const struct device *dev, int increment)
 	struct ptp_clock_wch_data *data = dev->data;
 	const struct ptp_clock_wch_config *config = dev->config;
 
-	/* NOTE: increment is in nanoseconds */
-
 	int ret = 0;
+
+	k_mutex_lock(&data->ptp_mutex, K_FOREVER);
 
 	/* read old addend register value */
 	uint32_t addend = config->regs->PTPTSAR;
@@ -127,7 +129,7 @@ static int ptp_clock_wch_adjust(const struct device *dev, int increment)
 	ETH->PTPTSHUR = seconds;
 	ETH->PTPTSLUR = sign | subseconds;
 
-	/* Set bit (TSSTU) in the Time stamp control register. */
+	/* Set TSSTU will adjust the clock by the offset */
 	config->regs->PTPTSCR |= ETH_PTPTSCR_TSSTU;
 	while ((config->regs->PTPTSCR |= ETH_PTPTSCR_TSSTU) != 0U)
 		;
@@ -136,17 +138,19 @@ static int ptp_clock_wch_adjust(const struct device *dev, int increment)
 	config->regs->PTPTSAR = addend;
 	config->regs->PTPTSCR |= ETH_PTPTSCR_TSARU;
 
+	k_mutex_unlock(&data->ptp_mutex);
+
 	return ret;
 }
 
 static int ptp_clock_wch_rate_adjust(const struct device *dev, double ratio)
 {
-	const struct ptp_clock_wch_config *config = dev->config;
 	struct ptp_clock_wch_data *data = dev->data;
+	const struct ptp_clock_wch_config *config = dev->config;
 	clock_control_subsys_t clock_sys;
-	int corr;
-	int32_t mul;
-	double val;
+	// int corr;
+	// int32_t mul;
+	// double val;
 	uint32_t enet_ref_pll_rate;
 
 	clock_sys = (clock_control_subsys_t *)(uintptr_t)config->clk_id;
@@ -155,7 +159,7 @@ static int ptp_clock_wch_rate_adjust(const struct device *dev, double ratio)
 
 	k_mutex_lock(&data->ptp_mutex, K_FOREVER);
 
-	// TMP, to test with WCH code
+	// TEMP, to test with WCH code
 	int32_t adj = (ratio - 1) * 100000;
 	if (adj > 5120000) {
 		adj = 5120000;
@@ -178,8 +182,9 @@ static int ptp_clock_wch_rate_adjust(const struct device *dev, double ratio)
 
 static int ptp_clock_wch_init(const struct device *dev)
 {
-	const struct ptp_clock_wch_config *config = dev->config;
 	struct ptp_clock_wch_data *data = dev->data;
+	const struct ptp_clock_wch_config *config = dev->config;
+	ETH_TypeDef *eth = config->regs;
 	clock_control_subsys_t clock_sys;
 
 	int ret = 0;
@@ -197,37 +202,20 @@ static int ptp_clock_wch_init(const struct device *dev)
 
 	LOG_WRN("PTP Clock Init");
 
-	// /* Mask the Time stamp trigger interrupt by setting bit 9 in the MACIMR register. */
-	// ETH_MACITConfig(ETH_MAC_IT_TST, DISABLE);
+	eth->PTPTSCR |= ETH_PTPTSCR_TSE;
+	eth->PTPSSIR = ADJ_FREQ_BASE_INCREMENT;
+	eth->PTPTSAR = ADJ_FREQ_BASE_ADDEND; // TODO calculate this from the clock prescaler
+	eth->PTPTSCR |= ETH_PTPTSCR_TSARU;
+	while ((eth->PTPTSCR & ETH_PTPTSCR_TSARU) != 0U)
+		;
 
-	// /* Program Time stamp register bit 0 to enable time stamping. */
-	// ETH_PTPTimeStampCmd(ENABLE);
+	eth->PTPTSCR |= ETH_PTPTSCR_TSFCU; /* Assume fine-update mode */
+	eth->PTPTSHUR = 0x0;
+	eth->PTPTSLUR = 0x0;
 
-	// /* Program the Subsecond increment register based on the PTP clock frequency. */
-	// ETH_SetPTPSubSecondIncrement(
-	// 	ADJ_FREQ_BASE_INCREMENT); /* to achieve 20 ns accuracy, the value is ~ 43 */
-
-	// if (UpdateMethod == ETH_PTP_FineUpdate) {
-	// 	/* If you are using the Fine correction method, program the Time stamp addend
-	// 	 * register and set Time stamp control register bit 5 (addend register update). */
-	// 	ETH_SetPTPTimeStampAddend(ADJ_FREQ_BASE_ADDEND);
-	// 	ETH_EnablePTPTimeStampAddend();
-
-	// 	/* Poll the Time stamp control register until bit 5 is cleared. */
-	// 	while (ETH_GetPTPFlagStatus(ETH_PTP_FLAG_TSARU) == SET)
-	// 		;
-	// }
-
-	// /* To select the Fine correction method (if required),
-	//  * program Time stamp control register  bit 1. */
-	// ETH_PTPUpdateMethodConfig(UpdateMethod);
-
-	// /* Program the Time stamp high update and Time stamp low update registers
-	//  * with the appropriate time value. */
-	// ETH_SetPTPTimeStampUpdate(ETH_PTP_PositiveTime, 0, 0);
-
-	// /* Set Time stamp control register bit 2 (Time stamp init). */
-	// ETH_InitializePTPTimeStamp();
+	eth->PTPTSCR |= ETH_PTPTSCR_TSSTI;
+	while ((eth->PTPTSCR & ETH_PTPTSCR_TSSTI) != 0U)
+		;
 
 	// TODO set to ratio of subsecond counter to HCLK 144 MHz
 	// data->clock_ratio =

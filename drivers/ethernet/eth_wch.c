@@ -520,6 +520,7 @@ static int eth_mac_init(const struct device *dev)
 	eth->MACHTLR = 0x0;
 	eth->MACFCR = 0x0;
 	eth->MACVLANTR = 0x0;
+	eth->MACIMR = 0x0;
 
 	eth->DMAOMR = ETH_DMAOMR_TSF | ETH_DMAOMR_FEF | ETH_DMAOMR_FUGF;
 
