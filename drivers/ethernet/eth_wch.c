@@ -41,7 +41,7 @@ LOG_MODULE_REGISTER(ethernet_wch, CONFIG_ETHERNET_LOG_LEVEL);
 #define ETH_DMA_TX_TIMEOUT_MS (20U) /* transmit timeout in milliseconds */
 
 #define ETH_RXBUF_NB   (4U)
-#define ETH_TXBUF_NB   (2U)
+#define ETH_TXBUF_NB   (4U)
 #define ETH_RXBUF_SIZE ETH_MAX_PACKET_SIZE /* Currently must be MTU-sized */
 #define ETH_TXBUF_SIZE ETH_MAX_PACKET_SIZE /* Can be smaller if required */
 
@@ -214,6 +214,11 @@ static void init_tx_dma_desc(ETH_TypeDef *eth)
 	/* Chain buffers in a ring */
 	dma_tx_desc_tab[ETH_TXBUF_NB - 1].buffer_2_next_descriptor =
 		(uint32_t)(&dma_tx_desc_tab[0]);
+#ifdef CONFIG_PTP_CLOCK_WCH
+	dma_tx_desc_tab[ETH_TXBUF_NB - 1].buffer_2_backup =
+		dma_tx_desc_tab[ETH_TXBUF_NB - 1].buffer_2_next_descriptor;
+#endif /* CONFIG_PTP_CLOCK_WCH */
+
 	dma_tx_desc_current = dma_tx_desc_tab;
 	eth->DMATDLAR = (uint32_t)dma_tx_desc_tab; /* pointer to start of desc. list */
 }
@@ -238,6 +243,11 @@ static void init_rx_dma_desc(ETH_TypeDef *eth)
 	/* Chain buffers in a ring */
 	dma_rx_desc_tab[ETH_RXBUF_NB - 1].buffer_2_next_descriptor =
 		(uint32_t)(&dma_rx_desc_tab[0]);
+#ifdef CONFIG_PTP_CLOCK_WCH
+	dma_rx_desc_tab[ETH_RXBUF_NB - 1].buffer_2_backup =
+		dma_rx_desc_tab[ETH_RXBUF_NB - 1].buffer_2_next_descriptor;
+#endif /* CONFIG_PTP_CLOCK_WCH */
+
 	dma_rx_desc_current = dma_rx_desc_tab;
 	eth->DMARDLAR = (uint32_t)dma_rx_desc_tab; /* pointer to start of desc. list */
 }
@@ -358,6 +368,16 @@ static struct net_pkt *eth_rx(const struct device *dev)
 		return NULL; /* Not error, simply packet has not arrived yet */
 	}
 
+#ifdef CONFIG_PTP_CLOCK_WCH
+	/* Fetch Timestamp */
+	uint32_t ts_second = dma_rx_desc_current->buffer_2_next_descriptor;
+	uint32_t ts_nanosecond = dma_rx_desc_current->buffer_1_address;
+
+	/* Restore overwritten registers */
+	dma_rx_desc_current->buffer_1_address = dma_rx_desc_current->buffer_1_backup;
+	dma_rx_desc_current->buffer_2_next_descriptor = dma_rx_desc_current->buffer_2_backup;
+#endif /* CONFIG_PTP_CLOCK_WCH */
+
 	if (((dma_rx_desc_current->status & ETH_DMARxDesc_ES) != 0U) ||
 	    ((dma_rx_desc_current->status & (ETH_DMARxDesc_FS | ETH_DMARxDesc_LS)) !=
 	     (ETH_DMARxDesc_FS | ETH_DMARxDesc_LS))) {
@@ -381,22 +401,18 @@ static struct net_pkt *eth_rx(const struct device *dev)
 		goto release_desc;
 	}
 
-	LOG_DBG("Receiving Packet: %p", pkt);
-
-release_desc:
 #ifdef CONFIG_PTP_CLOCK_WCH
-	/* Set Timestamp */
-	pkt->timestamp.second = dma_rx_desc_current->buffer_2_next_descriptor;
-	pkt->timestamp.nanosecond = subsec_to_nsec(dma_rx_desc_current->buffer_1_address);
+	/* Add Timestamp to Packet */
+	pkt->timestamp.second = ts_second;
+	pkt->timestamp.nanosecond = subsec_to_nsec(ts_nanosecond);
 	if (pkt->timestamp.second != UINT64_MAX) {
 		net_pkt_set_rx_timestamping(pkt, true);
 	}
-
-	/* Restore overwritten registers */
-	dma_rx_desc_current->buffer_1_address = dma_rx_desc_current->buffer_1_backup;
-	dma_rx_desc_current->buffer_2_next_descriptor = dma_rx_desc_current->buffer_2_backup;
 #endif /* CONFIG_PTP_CLOCK_WCH */
 
+	LOG_DBG("Receiving Packet: %p", pkt);
+
+release_desc:
 	dma_rx_desc_current->status |= ETH_DMARxDesc_OWN;
 	dma_rx_desc_current =
 		(struct eth_dma_desc *)(dma_rx_desc_current->buffer_2_next_descriptor);
@@ -562,11 +578,6 @@ static int eth_mac_init(const struct device *dev)
 {
 	const struct eth_wch_config *config = dev->config;
 	ETH_TypeDef *eth = config->regs;
-
-	eth->DMABMR |= ETH_DMABMR_SR;
-	while (eth->DMABMR & ETH_DMABMR_SR) {
-		;
-	}
 
 	/* Configure ethernet MAC */
 	eth->MACCR = 0x0;
@@ -776,10 +787,6 @@ static int eth_wch_init(const struct device *dev)
 
 		EXTEN->EXTEN_CTR |= EXTEN_ETH_10M_EN;
 	}
-
-	/* Software Reset of MAC peripherals */
-	RCC->AHBRSTR |= RCC_ETHMACRST;
-	RCC->AHBRSTR &= ~RCC_ETHMACRST;
 
 	/* configure pinmux */
 	ret = pinctrl_apply_state(config->pin_cfg, PINCTRL_STATE_DEFAULT);
