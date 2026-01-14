@@ -277,7 +277,9 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 	k_sem_reset(&data->tx_int_sem);
 
 	size_t bytes_remaining = total_len;
+#ifdef CONFIG_PTP_CLOCK_WCH
 	struct eth_dma_desc *first_descriptor = dma_tx_desc_current;
+#endif /* CONFIG_PTP_CLOCK_WCH */
 
 	do {
 		if ((dma_tx_desc_current->status & ETH_DMATxDesc_OWN) != 0U) {
