@@ -172,6 +172,10 @@ static int ptp_clock_wch_rate_adjust(const struct device *dev, double ratio)
 	uint32_t addend =
 		((((275LL * adj) >> 8) * (ADJ_FREQ_BASE_ADDEND >> 24)) >> 6) + ADJ_FREQ_BASE_ADDEND;
 
+	int32_t offset = addend - ADJ_FREQ_BASE_ADDEND;
+	LOG_INF("Set Adj to: %u", adj);
+	LOG_INF("Set Addend to: %u", offset);
+
 	config->regs->PTPTSAR = (uint32_t)(addend);
 	config->regs->PTPTSCR |= ETH_PTPTSCR_TSARU;
 
@@ -199,8 +203,6 @@ static int ptp_clock_wch_init(const struct device *dev)
 	}
 
 	k_mutex_init(&data->ptp_mutex);
-
-	LOG_WRN("PTP Clock Init");
 
 	eth->PTPTSCR |= ETH_PTPTSCR_TSE;
 	eth->PTPSSIR = ADJ_FREQ_BASE_INCREMENT;
