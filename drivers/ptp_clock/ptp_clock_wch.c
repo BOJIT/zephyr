@@ -77,7 +77,7 @@ static int ptp_clock_wch_set(const struct device *dev, struct net_ptp_time *tm)
 	uint32_t seconds = (uint32_t)(tm->second);
 	uint32_t subseconds = nsec_to_subsec(tm->nanosecond);
 
-	config->regs->PTPTSHUR = seconds;
+	config->regs->PTPTSHUR = seconds << 1; /* WCH Hardware Bug */
 	config->regs->PTPTSLUR = ETH_PTP_PositiveTime | subseconds;
 
 	/* Set TSSTI initialises the time */
@@ -99,7 +99,7 @@ static int ptp_clock_wch_get(const struct device *dev, struct net_ptp_time *tm)
 	const struct ptp_clock_wch_config *config = dev->config;
 
 	tm->nanosecond = subsec_to_nsec(config->regs->PTPTSLR);
-	tm->second = (uint64_t)(config->regs->PTPTSHR);
+	tm->second = (uint64_t)(config->regs->PTPTSHR) >> 1; /* WCH Hardware Bug */
 
 	return 0;
 }
@@ -219,6 +219,9 @@ static int ptp_clock_wch_init(const struct device *dev)
 	while ((eth->PTPTSCR & ETH_PTPTSCR_TSSTI) != 0U)
 		;
 
+	// Set to sys time for now!
+	// struct net_ptp_time t_sys = ns_to_net_ptp_time(k_uptime_get() * NSEC_PER_MSEC);
+	// ptp_clock_wch_set(dev, &t_sys);
 	// TODO set to ratio of subsecond counter to HCLK 144 MHz
 	// data->clock_ratio =
 	// 	((double)PTP_CLOCK_RATE) / ((double)ptp_hclk_rate);
